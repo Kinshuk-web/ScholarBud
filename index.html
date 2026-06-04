@@ -50,31 +50,22 @@
         .strike-active::after {
             transform: scaleX(1);
         }
-        
-        /* Pulse Animation for AI voice synthesis */
-        @keyframes pulse-ring {
-            0% { transform: scale(0.95); opacity: 0.5; }
-            50% { transform: scale(1.1); opacity: 0.8; }
-            100% { transform: scale(0.95); opacity: 0.5; }
-        }
-        .voice-pulse {
-            animation: pulse-ring 2s infinite ease-in-out;
-        }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 dark:bg-slate-900 dark:text-slate-100 h-full flex flex-col transition-colors duration-200 overflow-hidden">
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, collection, getDocs, updateDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // Expose Firebase tools to the global window scope
         window.doc = doc;
         window.setDoc = setDoc;
         window.getDoc = getDoc;
         window.onSnapshot = onSnapshot;
 
-        // Global variables setup
+        // Unified Workspace App State
         window.appState = {
             tasks: [],
             calendarEvents: [],
@@ -84,26 +75,26 @@
             chatHistory: [],
             youtubeResults: [],
             isCalendarConnected: false,
-            theme: 'dark', // Default dark theme for modern feel
+            theme: 'dark', // Modern default
             activeTab: 'dashboard',
             userId: null,
             userEmail: null,
             userDisplayName: null,
             userPhotoURL: null,
             firebaseReady: false,
-            uploadedImageBase64: null, // Temporary store for Multimodal Image-to-Study capability
+            uploadedImageBase64: null, 
             activeQuizQuestions: [],
             activeQuizIndex: 0,
             activeQuizScore: 0,
             voicePlaying: false,
             voiceAudio: null,
-            apiKey: localStorage.getItem('scholarbud_api_key') || '', // Local storage caching
+            apiKey: localStorage.getItem('scholarbud_api_key') || '', 
             
-            // Organisation and Permission state variables
+            // Mode & Permission controllers
             userMode: localStorage.getItem('scholarbud_user_mode') || '', // 'individual', 'admin', 'member'
             orgCode: localStorage.getItem('scholarbud_org_code') || '',
             orgName: localStorage.getItem('scholarbud_org_name') || '',
-            orgAdminKey: '', // Shared org admin API key if in member mode
+            orgAdminKey: '', 
             memberName: localStorage.getItem('scholarbud_member_name') || ''
         };
 
@@ -112,244 +103,148 @@
         window.auth = null;
         window.googleProvider = new GoogleAuthProvider();
 
-        // 3-Second Fail-Safe Timer: Hides the blocker if Firebase fails to resolve due to networking/sandbox
-        const authTimeout = setTimeout(() => {
-            console.log("Firebase connection took too long. Auto-launching safe local mode.");
-            document.getElementById('auth-loading-overlay').classList.add('hidden');
-            const cachedUser = localStorage.getItem('scholarbud_sim_user');
-            if (cachedUser) {
-                const parsed = JSON.parse(cachedUser);
-                window.appState.userId = parsed.uid;
-                window.appState.userEmail = parsed.email;
-                window.appState.userDisplayName = parsed.displayName;
-                window.appState.userPhotoURL = 'https://placehold.co/100x100/6366f1/ffffff?text=' + parsed.displayName[0];
-                evaluateModeSelection();
-            } else {
-                showLoginScreen();
-            }
-        }, 3000);
-
-        // Try initializing Firebase
+        // Attempt initializing public cloud databases
         if (typeof __firebase_config !== 'undefined') {
             try {
                 const firebaseConfig = JSON.parse(__firebase_config);
                 const app = initializeApp(firebaseConfig);
                 window.db = getFirestore(app);
                 window.auth = getAuth(app);
-                
-                // Track auth state updates
+                window.appState.firebaseReady = true;
+
                 onAuthStateChanged(window.auth, (user) => {
-                    clearTimeout(authTimeout); // Cancel safe fallback timer
                     if (user) {
                         window.appState.userId = user.uid;
                         window.appState.userEmail = user.email;
-                        window.appState.userDisplayName = user.displayName || 'Scholar Buddy User';
-                        window.appState.userPhotoURL = user.photoURL || '';
-                        window.appState.firebaseReady = true;
-                        console.log("Firebase Auth state updated:", user.uid);
+                        window.appState.userDisplayName = user.displayName;
+                        window.appState.userPhotoURL = user.photoURL;
                         
-                        // Render app and check if we need to load or show setup screens
-                        document.getElementById('auth-loading-overlay').classList.add('hidden');
-                        evaluateModeSelection();
-                    } else {
-                        // Not logged in yet
-                        document.getElementById('auth-loading-overlay').classList.add('hidden');
-                        showLoginScreen();
+                        // Proceed to corresponding setup screen depending on active selection
+                        handleAuthenticatedTransition();
                     }
                 });
             } catch (error) {
-                console.warn("Firebase initialization failed, falling back to local simulation:", error);
-                setupSimulationAuth();
+                console.warn("Cloud features loaded in localized simulation sandbox mode:", error);
             }
-        } else {
-            console.log("No Firebase config detected. Running in Notepad simulator mode.");
-            setupSimulationAuth();
         }
 
-        // Simulates Google login and authentication when running locally offline/in Notepad
-        function setupSimulationAuth() {
-            clearTimeout(authTimeout); // Cancel safe fallback timer
-            setTimeout(() => {
-                const cachedUser = localStorage.getItem('scholarbud_sim_user');
-                if (cachedUser) {
-                    const parsed = JSON.parse(cachedUser);
-                    window.appState.userId = parsed.uid;
-                    window.appState.userEmail = parsed.email;
-                    window.appState.userDisplayName = parsed.displayName;
-                    window.appState.userPhotoURL = 'https://placehold.co/100x100/6366f1/ffffff?text=' + parsed.displayName[0];
-                    evaluateModeSelection();
-                } else {
-                    showLoginScreen();
-                }
-                document.getElementById('auth-loading-overlay').classList.add('hidden');
-            }, 500);
-        }
-
-        // Global functions exposed from module
+        // Real Google Sign-in trigger with protocol error handling
         window.triggerGoogleLogin = async function() {
             if (window.auth) {
                 try {
-                    const result = await signInWithPopup(window.auth, window.googleProvider);
-                    console.log("Successfully logged in via Google Auth:", result.user.displayName);
+                    await signInWithPopup(window.auth, window.googleProvider);
                 } catch (error) {
-                    console.warn("Google Auth popup failed, using simulated login fallback for local compatibility:", error);
-                    triggerSimulatedLogin();
+                    console.error("Google Auth popup failed:", error);
+                    if (window.location.protocol === 'file:') {
+                        showLocalBypassModal();
+                    } else {
+                        alert("Authentication error: " + error.message);
+                    }
                 }
             } else {
-                triggerSimulatedLogin();
+                showLocalBypassModal();
             }
         };
 
-        window.submitSimulatedOfflineLogin = function() {
-            const nicknameInput = document.getElementById('sim-nickname-input');
-            const nickname = nicknameInput.value.trim();
-            if (!nickname) {
-                alert("Please type a Name or Nickname to sign in!");
-                return;
-            }
-            loginWithUsername(nickname);
-        };
-
-        function triggerSimulatedLogin() {
-            const nickname = prompt("Enter your Name or Nickname to sign in with Google (Simulated):", "Alex Mercer");
-            if (nickname && nickname.trim()) {
-                loginWithUsername(nickname);
-            }
-        }
-
-        function loginWithUsername(nickname) {
-            const simulatedUser = {
-                uid: 'sim-' + Math.floor(1000 + Math.random() * 9000),
-                email: nickname.toLowerCase().replace(/\s+/g, '') + '@gmail.com',
-                displayName: nickname.trim()
-            };
-            localStorage.setItem('scholarbud_sim_user', JSON.stringify(simulatedUser));
-            window.appState.userId = simulatedUser.uid;
-            window.appState.userEmail = simulatedUser.email;
-            window.appState.userDisplayName = simulatedUser.displayName;
-            window.appState.userPhotoURL = 'https://placehold.co/100x100/6366f1/ffffff?text=' + simulatedUser.displayName[0];
-            
-            evaluateModeSelection();
-        }
-
-        window.triggerLogout = function() {
-            if (confirm("Are you sure you want to sign out of Scholar Bud?")) {
-                localStorage.removeItem('scholarbud_sim_user');
-                localStorage.removeItem('scholarbud_user_mode');
-                localStorage.removeItem('scholarbud_org_code');
-                localStorage.removeItem('scholarbud_org_name');
-                localStorage.removeItem('scholarbud_member_name');
-                
-                // Reset State
-                window.appState.userMode = '';
-                window.appState.orgCode = '';
-                window.appState.orgName = '';
-                window.appState.memberName = '';
-                
-                if (window.auth) {
-                    window.auth.signOut().then(() => {
-                        window.location.reload();
-                    });
-                } else {
-                    window.location.reload();
+        // Firebase Signout
+        window.triggerSignOutFirebase = async function() {
+            if (window.auth) {
+                try {
+                    await signOut(window.auth);
+                } catch (e) {
+                    console.error("Auth sign out mismatch:", e);
                 }
             }
         };
     </script>
 
     <script>
-        // Global variables declaration
+        // Global view states
         window.currentDocId = 'd1';
         window.currentPresentationId = 'p1';
         window.currentSlideIndex = 0;
-        window.unsubscribeOrgSync = null; // Holds active database listener to prevent memory leaks
+        window.unsubscribeOrgSync = null; 
+        window.pendingAction = ''; // 'create' or 'join'
 
-        // Decides whether to show selection screens or dive directly into the workspace
+        // Decides initial rendering layout
         function evaluateModeSelection() {
             const hasMode = !!window.appState.userMode;
             if (hasMode) {
-                // Pre-configure mode specific configurations
                 configureUserInterfacePrivileges();
                 document.getElementById('welcome-auth-card').classList.add('hidden');
                 document.getElementById('app-main-layout').classList.remove('hidden');
-                
-                // Begin workspace content loads
                 initializeWorkspaceData();
             } else {
                 document.getElementById('welcome-auth-card').classList.remove('hidden');
                 document.getElementById('landing-selection-panel').classList.remove('hidden');
-                document.getElementById('login-panel').classList.add('hidden');
+                document.getElementById('auth-verification-panel').classList.add('hidden');
+                document.getElementById('org-details-form').classList.add('hidden');
+                document.getElementById('org-join-form').classList.add('hidden');
+                document.getElementById('app-main-layout').classList.add('hidden');
             }
         }
 
-        function showLoginScreen() {
-            document.getElementById('welcome-auth-card').classList.remove('hidden');
-            document.getElementById('login-panel').classList.remove('hidden');
-            document.getElementById('landing-selection-panel').classList.add('hidden');
-            document.getElementById('app-main-layout').classList.add('hidden');
-        }
-
-        // Activates specific layout limitations depending on if you are an Administrator, Member, or Individual
+        // Activates read/write permission blocks based on workspace roles
         function configureUserInterfacePrivileges() {
             const mode = window.appState.userMode;
             const banner = document.getElementById('privilege-banner');
             
             if (mode === 'member') {
-                // Member view mode
-                banner.innerText = `✨ Shared Classroom View Mode: Active inside Organisation "${window.appState.orgName}" (Code: ${window.appState.orgCode}). All task boards are Read-Only.`;
-                banner.className = "bg-amber-500/10 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-center text-xs py-2 px-4";
+                banner.innerText = `✨ Shared Classroom View Mode: Active inside "${window.appState.orgName}" (Code: ${window.appState.orgCode}). All updates are Read-Only.`;
+                banner.className = "bg-amber-500/10 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-center text-xs py-2 px-4 shrink-0";
                 
-                // Hide modifying buttons and tools
+                // Hide administrative interactive buttons
                 document.querySelectorAll('.admin-only-action').forEach(el => el.classList.add('hidden'));
                 document.querySelectorAll('.admin-only-input').forEach(el => el.disabled = true);
             } else if (mode === 'admin') {
-                // Admin dashboard mode
-                banner.innerText = `👑 Organisation Admin Mode: Managing "${window.appState.orgName}". Share Code [ ${window.appState.orgCode} ] with your classmates so they can view this whiteboard.`;
-                banner.className = "bg-indigo-600/10 border-b border-indigo-500/30 text-indigo-600 dark:text-indigo-400 font-bold text-center text-xs py-2 px-4";
+                banner.innerText = `👑 Organisation Admin Mode: Managing "${window.appState.orgName}". Share Code [ ${window.appState.orgCode} ] with your classmates to sync.`;
+                banner.className = "bg-indigo-600/10 border-b border-indigo-500/30 text-indigo-600 dark:text-indigo-400 font-bold text-center text-xs py-2 px-4 shrink-0";
                 
                 document.querySelectorAll('.admin-only-action').forEach(el => el.classList.remove('hidden'));
                 document.querySelectorAll('.admin-only-input').forEach(el => el.disabled = false);
             } else {
-                // Standard mode
                 banner.className = "hidden";
                 document.querySelectorAll('.admin-only-action').forEach(el => el.classList.remove('hidden'));
                 document.querySelectorAll('.admin-only-input').forEach(el => el.disabled = false);
             }
             
-            // Adjust profile header name details
-            document.getElementById('sidebar-profile-name').innerText = window.appState.userDisplayName || 'Scholar Guest';
-            document.getElementById('sidebar-profile-email').innerText = window.appState.userEmail || '';
-            document.getElementById('sidebar-profile-avatar').src = window.appState.userPhotoURL || 'https://placehold.co/100x100/6366f1/ffffff?text=U';
+            // Profile details bindings
+            document.getElementById('sidebar-profile-name').innerText = window.appState.userDisplayName || window.appState.memberName || 'Scholar Guest';
+            document.getElementById('sidebar-profile-email').innerText = window.appState.userEmail || 'Local Database Mode';
+            
+            const avatar = document.getElementById('sidebar-profile-avatar');
+            if (window.appState.userPhotoURL) {
+                avatar.src = window.appState.userPhotoURL;
+            } else {
+                avatar.src = `https://placehold.co/100x100/6366f1/ffffff?text=${(window.appState.userDisplayName || window.appState.memberName || 'S')[0]}`;
+            }
             
             const badge = document.getElementById('sidebar-role-badge');
             if (mode === 'admin') {
                 badge.innerText = "Admin Account";
-                badge.className = "text-[9px] bg-indigo-500 text-white font-bold py-0.5 px-2 rounded-full";
+                badge.className = "text-[9px] bg-indigo-500 text-white font-bold py-0.5 px-2 rounded-full mt-1 inline-block";
             } else if (mode === 'member') {
                 badge.innerText = "Member";
-                badge.className = "text-[9px] bg-amber-500 text-white font-bold py-0.5 px-2 rounded-full";
+                badge.className = "text-[9px] bg-amber-500 text-white font-bold py-0.5 px-2 rounded-full mt-1 inline-block";
             } else {
                 badge.innerText = "Individual";
-                badge.className = "text-[9px] bg-slate-500 text-white font-bold py-0.5 px-2 rounded-full";
+                badge.className = "text-[9px] bg-slate-500 text-white font-bold py-0.5 px-2 rounded-full mt-1 inline-block";
             }
         }
 
-        // Core Loader
+        // Initialize corresponding data models
         async function initializeWorkspaceData() {
-            // Cancel existing listener if running to avoid double runs
             if (window.unsubscribeOrgSync) {
                 window.unsubscribeOrgSync();
                 window.unsubscribeOrgSync = null;
             }
 
             if (window.appState.userMode === 'member') {
-                // Pull real-time details from Admin's shared Organisation Classroom sheet
                 await setupOrganisationRealTimeSync();
             } else if (window.appState.userMode === 'admin') {
-                // Admin mode pulls data and writes backups to Shared cloud or Local Storage
                 await loadAdminOrganisationData();
             } else {
-                // Individual Mode runs standard task loading workflows
+                // Individual sandbox parameters
                 await TaskManager.loadTasks();
                 window.appState.notes = StudyWorkspaceManager.getMockNotes();
                 window.appState.documents = StudyWorkspaceManager.getMockDocs();
@@ -360,121 +255,212 @@
     </script>
 
     <script>
-        // Organization generator setup
-        async function selectUserJourney(journey) {
+        // Trigger onboarding selection cards
+        function selectUserJourney(journey) {
             if (journey === 'individual') {
+                // Individual Mode: Zero login barrier
                 window.appState.userMode = 'individual';
+                window.appState.userDisplayName = 'Individual Scholar';
                 localStorage.setItem('scholarbud_user_mode', 'individual');
                 evaluateModeSelection();
-                NotificationManager.show("Working as an Individual Study Partner!", "success");
-            } 
-            else if (journey === 'create') {
-                const orgName = prompt("Enter an Organisation or School/Class Name:", "Advanced AI Study Club");
-                if (!orgName || !orgName.trim()) return;
-                
-                const customApiKey = prompt("Enter your Gemini API key (Allows you & members to chat with Scholar Buddy for free):", window.appState.apiKey);
-                
-                // Generate simple joining code
-                const orgCode = 'ORG-' + Math.floor(1000 + Math.random() * 9000);
-                
-                window.appState.userMode = 'admin';
-                window.appState.orgCode = orgCode;
-                window.appState.orgName = orgName;
-                window.appState.apiKey = customApiKey || '';
-                
-                localStorage.setItem('scholarbud_user_mode', 'admin');
-                localStorage.setItem('scholarbud_org_code', orgCode);
-                localStorage.setItem('scholarbud_org_name', orgName);
-                if (customApiKey) {
-                    localStorage.setItem('scholarbud_api_key', customApiKey);
-                }
-
-                // Initial baseline structures
-                window.appState.tasks = [
-                    { id: 'a1', text: `Welcome to ${orgName}! This is a shared classroom whiteboard created by Admin.`, completed: false, category: 'Studies', addedTime: new Date().getTime() }
-                ];
-                window.appState.notes = [
-                    { id: 'n1', title: 'Admin Welcome Note', content: 'Welcome scholars! Here is where we will collaborate and share resources.' }
-                ];
-                window.appState.documents = [
-                    { id: 'd1', title: 'Organisation Handbook', content: 'Use this workspace to study coordinates, formulas, or summaries generated by Scholar Buddy.' }
-                ];
-                window.appState.presentations = StudyWorkspaceManager.getMockPresentations();
-
-                // Save organisation state
-                await saveAdminOrganisationData();
-                evaluateModeSelection();
-                NotificationManager.show(`Organisation created successfully! Code: ${orgCode}`, "success");
-            }
-            else if (journey === 'join') {
-                const name = prompt("Enter your Name/Nickname:", window.appState.userDisplayName || "");
-                if (!name || !name.trim()) return;
-                
-                const orgCodeInput = prompt("Enter the 8-digit Organisation Joining Code (e.g. ORG-1234):");
-                if (!orgCodeInput || !orgCodeInput.trim()) return;
-                
-                const code = orgCodeInput.trim().toUpperCase();
-                
-                // Attempt loading org
-                NotificationManager.show("Verifying and joining organization...", "info");
-                
-                let success = false;
-                if (window.db) {
-                    try {
-                        const orgRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'orgs', code);
-                        const docSnap = await window.getDoc(orgRef);
-                        if (docSnap.exists()) {
-                            const data = docSnap.data();
-                            window.appState.userMode = 'member';
-                            window.appState.orgCode = code;
-                            window.appState.orgName = data.orgName;
-                            window.appState.orgAdminKey = data.adminApiKey || '';
-                            window.appState.memberName = name;
-                            
-                            localStorage.setItem('scholarbud_user_mode', 'member');
-                            localStorage.setItem('scholarbud_org_code', code);
-                            localStorage.setItem('scholarbud_org_name', data.orgName);
-                            localStorage.setItem('scholarbud_member_name', name);
-                            
-                            success = true;
-                        }
-                    } catch (e) {
-                        console.error("Cloud verification failed, checking local backup structures:", e);
-                    }
-                }
-                
-                // Local simulation fallback verification
-                if (!success) {
-                    const localBackup = localStorage.getItem(`scholarbud_sim_org_${code}`);
-                    if (localBackup) {
-                        const parsed = JSON.parse(localBackup);
-                        window.appState.userMode = 'member';
-                        window.appState.orgCode = code;
-                        window.appState.orgName = parsed.orgName;
-                        window.appState.orgAdminKey = parsed.adminApiKey || '';
-                        window.appState.memberName = name;
-                        
-                        localStorage.setItem('scholarbud_user_mode', 'member');
-                        localStorage.setItem('scholarbud_org_code', code);
-                        localStorage.setItem('scholarbud_org_name', parsed.orgName);
-                        localStorage.setItem('scholarbud_member_name', name);
-                        
-                        success = true;
-                    }
-                }
-
-                if (success) {
-                    evaluateModeSelection();
-                    NotificationManager.show(`Successfully joined "${window.appState.orgName}"!`, "success");
-                } else {
-                    NotificationManager.show("Organisation not found. Please verify the Code with your Admin.", "error");
-                }
+                NotificationManager.show("Successfully running in Individual Sandbox Mode!", "success");
+            } else {
+                // Admin or Member creation: Force real Google accounts
+                window.pendingAction = journey;
+                showAuthenticationPanel();
             }
         }
 
-        // Admin saving database logic
+        function showAuthenticationPanel() {
+            document.getElementById('landing-selection-panel').classList.add('hidden');
+            document.getElementById('auth-verification-panel').classList.remove('hidden');
+        }
+
+        // Triggered after successful Google authentication inside module script
+        function handleAuthenticatedTransition() {
+            document.getElementById('auth-verification-panel').classList.add('hidden');
+            
+            if (window.pendingAction === 'create') {
+                document.getElementById('org-details-form').classList.remove('hidden');
+            } else if (window.pendingAction === 'join') {
+                document.getElementById('org-join-form').classList.remove('hidden');
+            } else {
+                evaluateModeSelection();
+            }
+        }
+
+        // Direct Local Notepad Authentication Simulator for file:// protocol environments
+        function showLocalBypassModal() {
+            document.getElementById('local-bypass-modal').classList.remove('hidden');
+        }
+
+        function closeLocalBypassModal() {
+            document.getElementById('local-bypass-modal').classList.add('hidden');
+        }
+
+        function submitLocalBypassAuth() {
+            const input = document.getElementById('bypass-nickname-input').value.trim();
+            if (!input) {
+                alert("Please type an offline student name!");
+                return;
+            }
+
+            window.appState.userId = 'sim-local-' + Math.floor(1000 + Math.random() * 9000);
+            window.appState.userEmail = input.toLowerCase().replace(/\s+/g, '') + '@offline.com';
+            window.appState.userDisplayName = input;
+            window.appState.userPhotoURL = '';
+            
+            closeLocalBypassModal();
+            handleAuthenticatedTransition();
+        }
+
+        // Create Organisation Submission (Admin)
+        async function submitOrganisationCreation() {
+            const orgNameInput = document.getElementById('create-org-name').value.trim();
+            if (!orgNameInput) {
+                alert("Please provide a name for your Organisation!");
+                return;
+            }
+
+            const adminKeyInput = document.getElementById('create-org-apikey').value.trim();
+            const generatedCode = 'ORG-' + Math.floor(1000 + Math.random() * 9000);
+
+            window.appState.userMode = 'admin';
+            window.appState.orgCode = generatedCode;
+            window.appState.orgName = orgNameInput;
+            window.appState.apiKey = adminKeyInput;
+
+            localStorage.setItem('scholarbud_user_mode', 'admin');
+            localStorage.setItem('scholarbud_org_code', generatedCode);
+            localStorage.setItem('scholarbud_org_name', orgNameInput);
+            if (adminKeyInput) {
+                localStorage.setItem('scholarbud_api_key', adminKeyInput);
+            }
+
+            // Initialize classroom whiteboard elements
+            window.appState.tasks = [
+                { id: 't-init', text: `Welcome to ${orgNameInput}! This task was added by the Admin.`, completed: false, category: 'Studies', addedTime: new Date().getTime() }
+            ];
+            window.appState.notes = [
+                { id: 'n-init', title: 'Admin Welcome Note', content: 'Use this whiteboard area to write and synchronize revision notes.' }
+            ];
+            window.appState.documents = [
+                { id: 'd-init', title: 'Organisation Introduction', content: 'Students can read this and generate multiple choice quizzes or run AI speech summaries.' }
+            ];
+            window.appState.presentations = StudyWorkspaceManager.getMockPresentations();
+
+            await saveAdminOrganisationData();
+            evaluateModeSelection();
+            NotificationManager.show(`Whiteboard online! Code: ${generatedCode}`, "success");
+        }
+
+        // Join Organisation Submission (Member)
+        async function submitOrganisationJoin() {
+            const nickInput = document.getElementById('join-student-nickname').value.trim();
+            const codeInput = document.getElementById('join-org-code').value.trim().toUpperCase();
+
+            if (!nickInput || !codeInput) {
+                alert("Both Nickname and Organisation Code are required to join!");
+                return;
+            }
+
+            NotificationManager.show("Verifying whiteboard parameters...", "info");
+
+            let successfulJoin = false;
+            
+            if (window.db) {
+                try {
+                    const orgRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'orgs', codeInput);
+                    const snap = await window.getDoc(orgRef);
+                    if (snap.exists()) {
+                        const cloudData = snap.data();
+                        
+                        window.appState.userMode = 'member';
+                        window.appState.orgCode = codeInput;
+                        window.appState.orgName = cloudData.orgName;
+                        window.appState.orgAdminKey = cloudData.adminApiKey || '';
+                        window.appState.memberName = nickInput;
+
+                        localStorage.setItem('scholarbud_user_mode', 'member');
+                        localStorage.setItem('scholarbud_org_code', codeInput);
+                        localStorage.setItem('scholarbud_org_name', cloudData.orgName);
+                        localStorage.setItem('scholarbud_member_name', nickInput);
+
+                        successfulJoin = true;
+                    }
+                } catch (e) {
+                    console.error("Cloud verification error:", e);
+                }
+            }
+
+            // Fallback to local offline cache verification
+            if (!successfulJoin) {
+                const localBackup = localStorage.getItem(`scholarbud_sim_org_${codeInput}`);
+                if (localBackup) {
+                    const backupData = JSON.parse(localBackup);
+                    
+                    window.appState.userMode = 'member';
+                    window.appState.orgCode = codeInput;
+                    window.appState.orgName = backupData.orgName;
+                    window.appState.orgAdminKey = backupData.adminApiKey || '';
+                    window.appState.memberName = nickInput;
+
+                    localStorage.setItem('scholarbud_user_mode', 'member');
+                    localStorage.setItem('scholarbud_org_code', codeInput);
+                    localStorage.setItem('scholarbud_org_name', backupData.orgName);
+                    localStorage.setItem('scholarbud_member_name', nickInput);
+
+                    successfulJoin = true;
+                }
+            }
+
+            if (successfulJoin) {
+                evaluateModeSelection();
+                NotificationManager.show(`Successfully joined classroom: "${window.appState.orgName}"`, "success");
+            } else {
+                NotificationManager.show("Organisation not found. Please double-check the Code with your Admin.", "error");
+            }
+        }
+
+        // SWITCH WORKSPACE / mode / accounts
+        async function switchWorkspaceMode() {
+            if (confirm("Are you sure you want to switch accounts or change your active workspace?")) {
+                // Clear state memory
+                localStorage.removeItem('scholarbud_user_mode');
+                localStorage.removeItem('scholarbud_org_code');
+                localStorage.removeItem('scholarbud_org_name');
+                localStorage.removeItem('scholarbud_member_name');
+
+                window.appState.userMode = '';
+                window.appState.orgCode = '';
+                window.appState.orgName = '';
+                window.appState.memberName = '';
+                window.appState.userId = null;
+                window.appState.userEmail = null;
+                window.appState.userDisplayName = null;
+                window.appState.userPhotoURL = null;
+
+                // Stop synchronous listener
+                if (window.unsubscribeOrgSync) {
+                    window.unsubscribeOrgSync();
+                    window.unsubscribeOrgSync = null;
+                }
+
+                // Call Firebase real Sign-out
+                if (window.triggerSignOutFirebase) {
+                    await window.triggerSignOutFirebase();
+                }
+
+                evaluateModeSelection();
+                NotificationManager.show("Session terminated. Select your study path below.", "info");
+            }
+        }
+    </script>
+
+    <script>
+        // Save Admin Whiteboard database
         async function saveAdminOrganisationData() {
-            const orgData = {
+            const orgStructure = {
                 orgCode: window.appState.orgCode,
                 orgName: window.appState.orgName,
                 adminUserId: window.appState.userId,
@@ -487,206 +473,250 @@
                 lastUpdated: new Date().toISOString()
             };
 
-            // Cloud Storage Save (RULE 1 Path structure)
+            // Public Data path as per RULE 1
             if (window.db) {
                 try {
-                    const orgRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'orgs', window.appState.orgCode);
-                    await window.setDoc(orgRef, orgData);
+                    const orgDocRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'orgs', window.appState.orgCode);
+                    await window.setDoc(orgDocRef, orgStructure);
                 } catch (e) {
-                    console.error("Failed storing Org configurations to FireStore:", e);
+                    console.error("Firebase write bypassed. Saving to offline backup matrix.", e);
                 }
             }
 
-            // Simulated Notepad Local backup 
-            localStorage.setItem(`scholarbud_sim_org_${window.appState.orgCode}`, JSON.stringify(orgData));
+            localStorage.setItem(`scholarbud_sim_org_${window.appState.orgCode}`, JSON.stringify(orgStructure));
             renderApp();
         }
 
-        // Admin loading database logic
+        // Load Admin Whiteboard database
         async function loadAdminOrganisationData() {
             let loaded = false;
-            
+
             if (window.db) {
                 try {
-                    const orgRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'orgs', window.appState.orgCode);
-                    const docSnap = await window.getDoc(orgRef);
-                    if (docSnap.exists()) {
-                        const data = docSnap.data();
-                        window.appState.tasks = data.tasks || [];
-                        window.appState.calendarEvents = data.calendarEvents || [];
-                        window.appState.notes = data.notes || [];
-                        window.appState.documents = data.documents || [];
-                        window.appState.presentations = data.presentations || [];
-                        window.appState.apiKey = data.adminApiKey || window.appState.apiKey;
+                    const orgDocRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'orgs', window.appState.orgCode);
+                    const snap = await window.getDoc(orgDocRef);
+                    if (snap.exists()) {
+                        const cloudData = snap.data();
+                        window.appState.tasks = cloudData.tasks || [];
+                        window.appState.calendarEvents = cloudData.calendarEvents || [];
+                        window.appState.notes = cloudData.notes || [];
+                        window.appState.documents = cloudData.documents || [];
+                        window.appState.presentations = cloudData.presentations || [];
+                        window.appState.apiKey = cloudData.adminApiKey || window.appState.apiKey;
                         loaded = true;
                     }
                 } catch (e) {
-                    console.error("Firestore read error for admin data:", e);
+                    console.error("Firebase read bypassed. Checking local backup dictionary.", e);
                 }
             }
 
             if (!loaded) {
-                const cached = localStorage.getItem(`scholarbud_sim_org_${window.appState.orgCode}`);
-                if (cached) {
-                    const data = JSON.parse(cached);
-                    window.appState.tasks = data.tasks || [];
-                    window.appState.calendarEvents = data.calendarEvents || [];
-                    window.appState.notes = data.notes || [];
-                    window.appState.documents = data.documents || [];
-                    window.appState.presentations = data.presentations || [];
+                const localBackup = localStorage.getItem(`scholarbud_sim_org_${window.appState.orgCode}`);
+                if (localBackup) {
+                    const backupData = JSON.parse(localBackup);
+                    window.appState.tasks = backupData.tasks || [];
+                    window.appState.calendarEvents = backupData.calendarEvents || [];
+                    window.appState.notes = backupData.notes || [];
+                    window.appState.documents = backupData.documents || [];
+                    window.appState.presentations = backupData.presentations || [];
                 }
             }
             renderApp();
         }
 
-        // Member synchronization whiteboard logic (Real-Time Live Classroom Sync)
+        // Real-Time Collaborative sync loop for Members
         async function setupOrganisationRealTimeSync() {
-            const code = window.appState.orgCode;
+            const targetCode = window.appState.orgCode;
 
             if (window.db) {
                 try {
-                    const orgRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'orgs', code);
-                    
-                    // Hook active listener (Updates automatically without refreshing)
-                    window.unsubscribeOrgSync = window.onSnapshot(orgRef, (docSnap) => {
-                        if (docSnap.exists()) {
-                            const data = docSnap.data();
-                            window.appState.tasks = data.tasks || [];
-                            window.appState.calendarEvents = data.calendarEvents || [];
-                            window.appState.notes = data.notes || [];
-                            window.appState.documents = data.documents || [];
-                            window.appState.presentations = data.presentations || [];
-                            window.appState.orgAdminKey = data.adminApiKey || '';
+                    const orgDocRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'orgs', targetCode);
+                    window.unsubscribeOrgSync = window.onSnapshot(orgDocRef, (snap) => {
+                        if (snap.exists()) {
+                            const cloudData = snap.data();
+                            window.appState.tasks = cloudData.tasks || [];
+                            window.appState.calendarEvents = cloudData.calendarEvents || [];
+                            window.appState.notes = cloudData.notes || [];
+                            window.appState.documents = cloudData.documents || [];
+                            window.appState.presentations = cloudData.presentations || [];
+                            window.appState.orgAdminKey = cloudData.adminApiKey || '';
                             
                             renderApp();
-                            console.log("Realtime whiteboard updated from Administrator!");
+                            console.log("Whiteboard live sync updated!");
                         }
                     }, (err) => {
-                        console.error("Realtime listen failed:", err);
+                        console.error("Realtime sync disrupted:", err);
                     });
                     return;
                 } catch (e) {
-                    console.error("Firestore live whiteboard sync setup failed:", e);
+                    console.warn("Realtime sync unavailable on file system. Activating memory poll.", e);
                 }
             }
 
-            // Notepad local file offline simulation check
-            const syncSimulatorInterval = setInterval(() => {
-                // If mode changed, clear interval
+            // Local Notepad polling fallback to test Admin vs Member roles in parallel browser tabs
+            const pollingInterval = setInterval(() => {
                 if (window.appState.userMode !== 'member') {
-                    clearInterval(syncSimulatorInterval);
+                    clearInterval(pollingInterval);
                     return;
                 }
-                
-                const cached = localStorage.getItem(`scholarbud_sim_org_${code}`);
-                if (cached) {
-                    const data = JSON.parse(cached);
-                    window.appState.tasks = data.tasks || [];
-                    window.appState.calendarEvents = data.calendarEvents || [];
-                    window.appState.notes = data.notes || [];
-                    window.appState.documents = data.documents || [];
-                    window.appState.presentations = data.presentations || [];
-                    window.appState.orgAdminKey = data.adminApiKey || '';
+                const backup = localStorage.getItem(`scholarbud_sim_org_${targetCode}`);
+                if (backup) {
+                    const backupData = JSON.parse(backup);
+                    window.appState.tasks = backupData.tasks || [];
+                    window.appState.calendarEvents = backupData.calendarEvents || [];
+                    window.appState.notes = backupData.notes || [];
+                    window.appState.documents = backupData.documents || [];
+                    window.appState.presentations = backupData.presentations || [];
+                    window.appState.orgAdminKey = backupData.adminApiKey || '';
                     renderApp();
                 }
-            }, 3000); // Poll local mock storage databases every 3 seconds to test in multiple tabs!
+            }, 2500);
         }
     </script>
 
-    <div id="auth-loading-overlay" class="fixed inset-0 bg-slate-900 z-50 flex flex-col items-center justify-center space-y-4">
-        <div class="h-12 w-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-        <p class="text-xs text-indigo-400 font-bold uppercase tracking-wider">Securing your Scholar Bud session...</p>
-    </div>
-
-    <!-- Login Selection Dashboard Container -->
-    <div id="welcome-auth-card" class="hidden fixed inset-0 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 z-40 flex items-center justify-center p-4 overflow-y-auto">
+    <!-- Welcome / Setup Wizard Modal Card -->
+    <div id="welcome-auth-card" class="fixed inset-0 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 z-40 flex items-center justify-center p-4 overflow-y-auto">
         <div class="max-w-2xl w-full bg-slate-800/90 border border-slate-700/60 p-8 rounded-3xl shadow-2xl backdrop-blur-xl">
             
-            <!-- Logo Section -->
+            <!-- Brand Logo -->
             <div class="flex items-center space-x-3 mb-8 justify-center">
                 <div class="h-12 w-12 bg-gradient-to-tr from-violet-600 to-indigo-500 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-500/30">
                     <i class="fa-solid fa-graduation-cap text-2xl"></i>
                 </div>
                 <div>
                     <h1 class="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-white via-slate-200 to-indigo-300 bg-clip-text text-transparent">Scholar Bud</h1>
-                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Ultimate Gemini Study Hub</p>
+                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Your Ultimate AI Study Workspace</p>
                 </div>
             </div>
 
-            <!-- Login Panel (Step 1) -->
-            <div id="login-panel" class="space-y-6 text-center">
-                <h2 class="text-xl font-bold text-white">Let's build your study workspace</h2>
-                <p class="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-                    Scholar Bud organizes notes, day-bound task trackers, calendar schedules, and connects you with a highly customized Gemini AI Assistant. Log in below.
-                </p>
-
-                <!-- Method A: Google Account Auth -->
-                <div class="pt-2 flex justify-center">
-                    <button onclick="triggerGoogleLogin()" class="bg-indigo-600 hover:bg-indigo-550 text-white font-bold text-xs px-8 py-4 rounded-xl flex items-center gap-3 transition-all transform hover:scale-[1.02] shadow-xl shadow-indigo-500/20">
-                        <i class="fa-brands fa-google text-base"></i> Sign in with Google Account
-                    </button>
-                </div>
-
-                <!-- Divider -->
-                <div class="flex items-center my-4">
-                    <div class="flex-1 border-t border-slate-700"></div>
-                    <span class="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Or Sign In Offline</span>
-                    <div class="flex-1 border-t border-slate-700"></div>
-                </div>
-
-                <!-- Method B: Offline Local Login Block (Fixed & Safe for local files / iframes) -->
-                <div class="bg-slate-900/50 p-5 rounded-2xl border border-slate-700/50 max-w-sm mx-auto space-y-3">
-                    <div class="text-left">
-                        <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Type Your Student Name</label>
-                        <input type="text" id="sim-nickname-input" placeholder="e.g., Alex Mercer" onkeydown="if(event.key === 'Enter') submitSimulatedOfflineLogin()" class="w-full text-xs bg-slate-800 p-3 rounded-xl border border-slate-700 mt-1 text-slate-200 focus:outline-none focus:border-indigo-500 font-semibold">
-                    </div>
-                    <button onclick="submitSimulatedOfflineLogin()" class="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold text-xs py-3 rounded-xl transition-all">
-                        Launch Offline Workspace
-                    </button>
-                    <p class="text-[9px] text-slate-500 font-medium">No Google popup blockers or internet configurations required! Your browser will cache all work safely.</p>
-                </div>
-            </div>
-
-            <!-- Landing Option Selector (Step 2) -->
-            <div id="landing-selection-panel" class="hidden space-y-6">
+            <!-- PANEL A: Onboarding Landing Selection (No forced login first!) -->
+            <div id="landing-selection-panel" class="space-y-6">
                 <div class="text-center">
                     <h2 class="text-xl font-extrabold text-white">Choose Your Study Path</h2>
                     <p class="text-xs text-slate-400 mt-1">Select how you want to manage your student database today.</p>
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4">
-                    <!-- Option 1: Admin -->
-                    <div class="bg-slate-900/60 hover:bg-slate-900 border border-slate-700/60 p-5 rounded-2xl cursor-pointer transition-all hover:border-indigo-500 hover:shadow-lg flex flex-col justify-between" onclick="selectUserJourney('create')">
-                        <div class="space-y-2">
-                            <div class="h-10 w-10 bg-indigo-500/20 text-indigo-400 rounded-xl flex items-center justify-center text-lg"><i class="fa-solid fa-crown"></i></div>
-                            <h3 class="text-xs font-bold text-white uppercase tracking-wider">Create Organisation</h3>
-                            <p class="text-[11px] text-slate-400 leading-relaxed">Form a shared workspace for your class. You get an admin account to configure AI and share files with classmates.</p>
-                        </div>
-                        <span class="text-[10px] text-indigo-400 font-bold block mt-4">Start Class Account <i class="fa-solid fa-arrow-right"></i></span>
-                    </div>
-
-                    <!-- Option 2: Join -->
-                    <div class="bg-slate-900/60 hover:bg-slate-900 border border-slate-700/60 p-5 rounded-2xl cursor-pointer transition-all hover:border-amber-500 hover:shadow-lg flex flex-col justify-between" onclick="selectUserJourney('join')">
-                        <div class="space-y-2">
-                            <div class="h-10 w-10 bg-amber-500/20 text-amber-400 rounded-xl flex items-center justify-center text-lg"><i class="fa-solid fa-users"></i></div>
-                            <h3 class="text-xs font-bold text-white uppercase tracking-wider">Join Organisation</h3>
-                            <p class="text-[11px] text-slate-400 leading-relaxed">Enter an Org code from your teacher or class admin. Access a shared dashboard and view read-only materials.</p>
-                        </div>
-                        <span class="text-[10px] text-amber-400 font-bold block mt-4">Enter Org Code <i class="fa-solid fa-arrow-right"></i></span>
-                    </div>
-
-                    <!-- Option 3: Individual -->
+                    <!-- Option 1: Individual -->
                     <div class="bg-slate-900/60 hover:bg-slate-900 border border-slate-700/60 p-5 rounded-2xl cursor-pointer transition-all hover:border-emerald-500 hover:shadow-lg flex flex-col justify-between" onclick="selectUserJourney('individual')">
                         <div class="space-y-2">
                             <div class="h-10 w-10 bg-emerald-500/20 text-emerald-400 rounded-xl flex items-center justify-center text-lg"><i class="fa-solid fa-user"></i></div>
                             <h3 class="text-xs font-bold text-white uppercase tracking-wider">Use as Individual</h3>
-                            <p class="text-[11px] text-slate-400 leading-relaxed">Simple offline style sandbox. Store to-dos, notes, documents, and calendar blocks privately on your machine.</p>
+                            <p class="text-[11px] text-slate-400 leading-relaxed">No Google Sign-In required. Store all notes, to-dos, documents, and calendar blocks privately on your device.</p>
                         </div>
-                        <span class="text-[10px] text-emerald-400 font-bold block mt-4">Launch Personal Mode <i class="fa-solid fa-arrow-right"></i></span>
+                        <span class="text-[10px] text-emerald-400 font-bold block mt-4">Launch Local Sandbox <i class="fa-solid fa-arrow-right"></i></span>
+                    </div>
+
+                    <!-- Option 2: Admin -->
+                    <div class="bg-slate-900/60 hover:bg-slate-900 border border-slate-700/60 p-5 rounded-2xl cursor-pointer transition-all hover:border-indigo-500 hover:shadow-lg flex flex-col justify-between" onclick="selectUserJourney('create')">
+                        <div class="space-y-2">
+                            <div class="h-10 w-10 bg-indigo-500/20 text-indigo-400 rounded-xl flex items-center justify-center text-lg"><i class="fa-solid fa-crown"></i></div>
+                            <h3 class="text-xs font-bold text-white uppercase tracking-wider">Create Organisation</h3>
+                            <p class="text-[11px] text-slate-400 leading-relaxed">Requires Google sign-in. Form a shared workspace for your class and coordinate study guides together.</p>
+                        </div>
+                        <span class="text-[10px] text-indigo-400 font-bold block mt-4">Start Class Account <i class="fa-solid fa-arrow-right"></i></span>
+                    </div>
+
+                    <!-- Option 3: Join -->
+                    <div class="bg-slate-900/60 hover:bg-slate-900 border border-slate-700/60 p-5 rounded-2xl cursor-pointer transition-all hover:border-amber-500 hover:shadow-lg flex flex-col justify-between" onclick="selectUserJourney('join')">
+                        <div class="space-y-2">
+                            <div class="h-10 w-10 bg-amber-500/20 text-amber-400 rounded-xl flex items-center justify-center text-lg"><i class="fa-solid fa-users"></i></div>
+                            <h3 class="text-xs font-bold text-white uppercase tracking-wider">Join Organisation</h3>
+                            <p class="text-[11px] text-slate-400 leading-relaxed">Requires Google sign-in. Type in an Org code to access the Admin's shared whiteboard in read-only mode.</p>
+                        </div>
+                        <span class="text-[10px] text-amber-400 font-bold block mt-4">Enter Classroom Code <i class="fa-solid fa-arrow-right"></i></span>
                     </div>
                 </div>
             </div>
 
+            <!-- PANEL B: Google Verification Block (Triggered *only* for Create/Join Org) -->
+            <div id="auth-verification-panel" class="hidden text-center space-y-6">
+                <div class="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl inline-block">
+                    <i class="fa-solid fa-shield-halved text-indigo-400 text-3xl"></i>
+                </div>
+                <h3 class="text-xl font-bold text-white">Google Verification Required</h3>
+                <p class="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
+                    Collaborative classroom databases are securely linked to Google accounts. Please log in to synchronize documents with your classmates.
+                </p>
+                
+                <div class="pt-2 flex flex-col items-center justify-center gap-3">
+                    <button onclick="triggerGoogleLogin()" class="bg-indigo-600 hover:bg-indigo-550 text-white font-bold text-xs px-8 py-3.5 rounded-xl flex items-center gap-3 transition-all transform hover:scale-[1.02] shadow-xl">
+                        <i class="fa-brands fa-google text-base"></i> Sign in with Google Account
+                    </button>
+                    <button onclick="evaluateModeSelection()" class="text-xs text-slate-400 hover:text-white font-medium">
+                        <i class="fa-solid fa-arrow-left"></i> Go Back to Modes
+                    </button>
+                </div>
+            </div>
+
+            <!-- PANEL C: Create Organisation Detailed Parameters -->
+            <div id="org-details-form" class="hidden space-y-4">
+                <h3 class="text-lg font-bold text-white text-center">Set up Classroom Organisation</h3>
+                <p class="text-xs text-slate-400 text-center leading-relaxed">Enter details below to host a public collaborative whiteboard document.</p>
+                
+                <div class="space-y-3 pt-2">
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Organisation Name</label>
+                        <input type="text" id="create-org-name" placeholder="e.g. Advanced AI Study Club" class="w-full text-xs bg-slate-900 p-3.5 rounded-xl border border-slate-700 text-slate-200 mt-1 focus:outline-none focus:border-indigo-500 font-semibold">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Gemini API Key (Optional)</label>
+                        <input type="password" id="create-org-apikey" placeholder="Paste Key if available (AIzaSy...)" class="w-full text-xs bg-slate-900 p-3.5 rounded-xl border border-slate-700 text-slate-200 mt-1 focus:outline-none focus:border-indigo-500 font-mono">
+                        <span class="text-[9px] text-slate-500 block mt-1">If set, organization members can query Scholar Buddy for free using your key!</span>
+                    </div>
+                </div>
+
+                <div class="pt-4 flex items-center gap-2 font-bold text-xs">
+                    <button onclick="evaluateModeSelection()" class="w-1/2 bg-slate-700 hover:bg-slate-600 text-slate-300 py-3 rounded-xl transition-all">Cancel</button>
+                    <button onclick="submitOrganisationCreation()" class="w-1/2 bg-indigo-600 hover:bg-indigo-550 text-white py-3 rounded-xl transition-all shadow-md">Create Whiteboard</button>
+                </div>
+            </div>
+
+            <!-- PANEL D: Join Organisation Parameters -->
+            <div id="org-join-form" class="hidden space-y-4">
+                <h3 class="text-lg font-bold text-white text-center">Join Existing Whiteboard</h3>
+                <p class="text-xs text-slate-400 text-center leading-relaxed">Input your nickname and classroom code to begin studying together.</p>
+
+                <div class="space-y-3 pt-2">
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Your Student Nickname</label>
+                        <input type="text" id="join-student-nickname" placeholder="e.g. Charlie" class="w-full text-xs bg-slate-900 p-3.5 rounded-xl border border-slate-700 text-slate-200 mt-1 focus:outline-none focus:border-indigo-500 font-semibold">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">8-Digit Organisation Code</label>
+                        <input type="text" id="join-org-code" placeholder="e.g. ORG-1234" class="w-full text-xs bg-slate-900 p-3.5 rounded-xl border border-slate-700 text-slate-200 mt-1 focus:outline-none focus:border-indigo-500 font-mono font-bold uppercase tracking-widest text-center">
+                    </div>
+                </div>
+
+                <div class="pt-4 flex items-center gap-2 font-bold text-xs">
+                    <button onclick="evaluateModeSelection()" class="w-1/2 bg-slate-700 hover:bg-slate-600 text-slate-300 py-3 rounded-xl transition-all">Cancel</button>
+                    <button onclick="submitOrganisationJoin()" class="w-1/2 bg-amber-500 hover:bg-amber-600 text-slate-950 py-3 rounded-xl transition-all shadow-md">Connect & Sync</button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Offline Bypass Modal (For when file:// protocol stops Google Sign-In window popups) -->
+    <div id="local-bypass-modal" class="hidden fixed inset-0 bg-black/75 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-slate-800 border border-slate-700/60 p-6 rounded-2xl max-w-sm w-full space-y-4 text-center">
+            <div class="p-3 bg-amber-500/10 border border-amber-500/30 rounded-full inline-block">
+                <i class="fa-solid fa-triangle-exclamation text-amber-500 text-xl"></i>
+            </div>
+            <h4 class="font-extrabold text-sm text-white">Local Execution Detected</h4>
+            <p class="text-xs text-slate-300 leading-normal">
+                Because this webpage is running locally as a raw Notepad file (`file://` protocol), your browser blockades standard Google Sign-In windows.
+            </p>
+            <p class="text-[11px] text-slate-400 leading-normal font-bold bg-slate-900/50 p-2.5 rounded-xl border border-slate-700">
+                To simulate organization features offline, type an administrator name below to proceed instantly.
+            </p>
+
+            <input type="text" id="bypass-nickname-input" placeholder="e.g. Local Admin Student" class="w-full text-xs bg-slate-950 p-3 rounded-xl border border-slate-700 text-white focus:outline-none">
+
+            <div class="flex gap-2 font-bold text-xs">
+                <button onclick="closeLocalBypassModal()" class="w-1/3 bg-slate-700 text-slate-300 py-2.5 rounded-xl">Cancel</button>
+                <button onclick="submitLocalBypassAuth()" class="w-2/3 bg-indigo-600 text-white py-2.5 rounded-xl">Launch Simulator</button>
+            </div>
         </div>
     </div>
 
@@ -698,7 +728,7 @@
         <div class="flex h-full overflow-hidden flex-1">
             
             <!-- Sidebar Navigation -->
-            <aside id="sidebar" class="w-64 bg-slate-800 text-slate-100 flex flex-col justify-between border-r border-slate-700 transition-all duration-300 md:relative absolute z-30 h-full -left-64 md:left-0">
+            <aside id="sidebar" class="w-64 bg-slate-800 text-slate-100 flex flex-col justify-between border-r border-slate-700 transition-all duration-300 md:relative absolute z-30 h-full -left-64 md:left-0 shrink-0">
                 <div class="p-5 flex flex-col h-full justify-between overflow-y-auto">
                     <div>
                         <!-- Logo / Brand -->
@@ -714,7 +744,7 @@
 
                         <!-- User Profile Box -->
                         <div class="bg-slate-900/60 p-3 rounded-2xl mb-6 flex items-center space-x-3 border border-slate-700/50">
-                            <img id="sidebar-profile-avatar" class="h-9 w-9 rounded-xl object-cover" src="https://placehold.co/100" alt="avatar">
+                            <img id="sidebar-profile-avatar" class="h-9 w-9 rounded-xl object-cover shrink-0" src="https://placehold.co/100" alt="avatar">
                             <div class="overflow-hidden flex-1">
                                 <h4 id="sidebar-profile-name" class="text-xs font-bold text-slate-200 truncate">Alex Mercer</h4>
                                 <p id="sidebar-profile-email" class="text-[9px] text-slate-400 truncate">alex@gmail.com</p>
@@ -769,9 +799,12 @@
                             <div id="midnight-countdown" class="text-[10px] text-indigo-300 mt-1 font-mono">Auto-clear in: 00:00:00</div>
                         </div>
                         
-                        <!-- Theme, API & Profile toggles -->
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-2">
+                        <!-- Actions & Swappers -->
+                        <div class="space-y-2">
+                            <button onclick="switchWorkspaceMode()" class="w-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/25 py-2.5 rounded-xl hover:bg-indigo-500 hover:text-white transition-all text-xs font-bold flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-arrows-spin"></i> Switch Workspace
+                            </button>
+                            <div class="flex items-center justify-between gap-2">
                                 <button onclick="toggleTheme()" class="h-9 w-9 bg-slate-700 hover:bg-slate-600 rounded-xl flex items-center justify-center text-slate-300 transition-colors" title="Toggle Theme">
                                     <i id="theme-icon" class="fa-solid fa-sun text-xs"></i>
                                 </button>
@@ -779,10 +812,10 @@
                                     <i class="fa-solid fa-key text-xs"></i>
                                     <span id="api-status-dot" class="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full border-2 border-slate-800 bg-rose-500"></span>
                                 </button>
+                                <button onclick="switchWorkspaceMode()" class="h-9 px-3 bg-rose-500/10 text-rose-400 border border-rose-500/25 rounded-xl hover:bg-rose-50 hover:text-white transition-all text-xs font-bold flex-1" title="Sign Out">
+                                    Logout
+                                </button>
                             </div>
-                            <button onclick="triggerLogout()" class="h-9 px-3 bg-rose-500/10 text-rose-400 border border-rose-500/25 rounded-xl hover:bg-rose-500 hover:text-white transition-all text-xs font-bold" title="Sign Out">
-                                Sign Out
-                            </button>
                         </div>
                     </div>
                 </div>
@@ -795,7 +828,7 @@
             <main class="flex-1 flex flex-col overflow-hidden">
                 
                 <!-- Top Navbar -->
-                <header class="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700/50 px-6 py-4 flex items-center justify-between z-10 transition-colors">
+                <header class="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700/50 px-6 py-4 flex items-center justify-between z-10 transition-colors shrink-0">
                     <div class="flex items-center space-x-3">
                         <button onclick="toggleMobileSidebar()" class="md:hidden text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white mr-2">
                             <i class="fa-solid fa-bars text-xl"></i>
@@ -806,7 +839,7 @@
                         </div>
                     </div>
 
-                    <!-- Integrations & Status Quick Links -->
+                    <!-- Quick Links -->
                     <div class="flex items-center space-x-3">
                         <div class="hidden sm:flex items-center bg-slate-100 dark:bg-slate-700 rounded-xl p-1 gap-1">
                             <button onclick="switchTab('workspace'); selectWorkspaceSub('notes')" class="text-xs px-3 py-1.5 rounded-lg font-medium text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-600 transition-all flex items-center gap-1">
@@ -820,14 +853,14 @@
                             </button>
                         </div>
 
-                        <button onclick="switchTab('chatbot')" class="bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-550/10 dark:hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all">
+                        <button onclick="switchTab('chatbot')" class="bg-indigo-550/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all">
                             <i class="fa-solid fa-hands-holding-child"></i> Scholar Buddy Chat
                         </button>
                     </div>
                 </header>
 
                 <!-- Notification banner container -->
-                <div id="notification-banner" class="hidden mx-6 mt-4 p-3 rounded-xl text-xs font-semibold flex items-center justify-between transition-all duration-300">
+                <div id="notification-banner" class="hidden mx-6 mt-4 p-3 rounded-xl text-xs font-semibold flex items-center justify-between transition-all duration-300 shrink-0">
                     <span id="notification-text">Welcome to Scholar Bud! Ready to study today?</span>
                     <button onclick="closeNotification()" class="text-slate-500 hover:text-slate-800 ml-2"><i class="fa-solid fa-xmark"></i></button>
                 </div>
@@ -836,17 +869,17 @@
 
                     <!-- PANEL 1: DASHBOARD -->
                     <section id="panel-dashboard" class="tab-panel space-y-6">
-                        <!-- High Impact Welcoming Card -->
+                        <!-- Welcoming Card -->
                         <div class="bg-gradient-to-r from-violet-600 via-indigo-600 to-indigo-700 text-white rounded-3xl p-6 md:p-8 shadow-xl relative overflow-hidden">
                             <div class="absolute -right-10 -bottom-10 opacity-15 transform rotate-12">
                                 <i class="fa-solid fa-graduation-cap text-[180px]"></i>
                             </div>
                             <div class="max-w-xl relative z-10">
                                 <span class="bg-white/20 text-white text-[10px] font-bold tracking-widest uppercase px-2.5 py-1 rounded-full">Scholar Bud Workspace</span>
-                                <h3 class="text-2xl md:text-3xl font-extrabold mt-3 leading-tight">Elevate studies with shared classroom collaborative tools.</h3>
-                                <p class="text-slate-100/90 text-sm mt-2 font-medium">To-dos clear at midnight automatically. Work with Scholar Buddy to generate notes, presentations, docs, and listen to AI Voice Aloud.</p>
+                                <h3 class="text-2xl md:text-3xl font-extrabold mt-3 leading-tight font-sans">Elevate your study schedules with shared whiteboard models.</h3>
+                                <p class="text-slate-100/90 text-sm mt-2 font-medium">To-dos clear at midnight automatically. Work with Scholar Buddy to compile documents, design presentation slides, and trigger speech voice aloud.</p>
                                 <button onclick="switchTab('chatbot')" class="mt-6 bg-white text-indigo-700 font-bold text-xs px-6 py-3 rounded-xl shadow-lg hover:shadow-white/10 hover:scale-[1.02] active:scale-95 transition-all flex items-center gap-2">
-                                    <i class="fa-solid fa-circle-play"></i> Talk to Scholar Buddy
+                                    <i class="fa-solid fa-circle-play"></i> Ask Scholar Buddy
                                 </button>
                             </div>
                         </div>
@@ -854,7 +887,7 @@
                         <!-- Widgets Grid -->
                         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                             
-                            <!-- Quick Tasks Progress Widget -->
+                            <!-- Tasks Progress Widget -->
                             <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm flex flex-col justify-between">
                                 <div class="flex items-center justify-between mb-4">
                                     <h4 class="font-bold text-sm text-slate-800 dark:text-white uppercase tracking-wider text-xs">Today's Study Progress</h4>
@@ -877,7 +910,7 @@
                                 </div>
                             </div>
 
-                            <!-- Calendar Sneak Peek Widget -->
+                            <!-- Calendar Peek Widget -->
                             <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm flex flex-col justify-between">
                                 <div class="flex items-center justify-between mb-4">
                                     <h4 class="font-bold text-sm text-slate-800 dark:text-white uppercase tracking-wider text-xs">Upcoming Milestones</h4>
@@ -891,7 +924,7 @@
                                 </button>
                             </div>
 
-                            <!-- Workspace Analytics / Overview Widget -->
+                            <!-- Library Analytics Widget -->
                             <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm flex flex-col justify-between">
                                 <div class="flex items-center justify-between mb-4">
                                     <h4 class="font-bold text-sm text-slate-800 dark:text-white uppercase tracking-wider text-xs">Resource Library</h4>
@@ -918,12 +951,12 @@
 
                         </div>
 
-                        <!-- YouTube Quick Study Search Widget -->
+                        <!-- YouTube Study Search Widget -->
                         <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm space-y-4">
                             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                                 <div>
                                     <h4 class="font-black text-base text-slate-800 dark:text-white flex items-center gap-2">
-                                        <i class="fa-brands fa-youtube text-red-600 text-xl"></i> Search Academic Tutorials
+                                        <i class="fa-brands fa-youtube text-red-600 text-xl"></i> Academic Tutorials Search
                                     </h4>
                                     <p class="text-xs text-slate-400 font-medium">Extract relevant video lessons directly inside Scholar Bud.</p>
                                 </div>
@@ -933,10 +966,9 @@
                                 </div>
                             </div>
                             
-                            <!-- Video output items -->
                             <div id="youtube-results-container" class="grid grid-cols-1 md:grid-cols-3 gap-4">
                                 <div class="col-span-full text-center py-6 text-slate-400 text-xs font-semibold">
-                                    Type a topic above to query classroom YouTube lectures instantly.
+                                    Type an academic query above to locate interactive tutorials.
                                 </div>
                             </div>
                         </div>
@@ -947,15 +979,15 @@
                         <div class="bg-amber-50 dark:bg-amber-500/10 border border-amber-200/60 dark:border-amber-500/20 rounded-2xl p-4 flex items-start gap-3">
                             <div class="p-2 bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 rounded-lg shrink-0"><i class="fa-solid fa-clock"></i></div>
                             <div>
-                                <h4 class="font-extrabold text-sm text-amber-800 dark:text-amber-400">Midnight Reset Protocol</h4>
-                                <p class="text-xs text-amber-700/90 dark:text-amber-300 mt-1 leading-relaxed">Scholar Bud keeps your daily focus clean. All tasks on this board will automatically delete exactly at midnight (00:00:00) according to your local computer clock.</p>
+                                <h4 class="font-extrabold text-sm text-amber-800 dark:text-amber-400">Midnight Auto-Reset</h4>
+                                <p class="text-xs text-amber-700/90 dark:text-amber-300 mt-1 leading-relaxed">Scholar Bud keeps your focus clean. Daily checkoff tasks will automatically wipe out exactly at midnight (00:00:00) relative to your local device clock.</p>
                             </div>
                         </div>
 
-                        <!-- Main Task Board -->
+                        <!-- Main Board -->
                         <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm overflow-hidden">
                             
-                            <!-- Task input panel (Admin/Individual Only) -->
+                            <!-- Input -->
                             <div class="admin-only-action p-6 border-b border-slate-200/60 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-800/50 flex flex-col md:flex-row items-center gap-4">
                                 <div class="flex-1 w-full relative">
                                     <input type="text" id="task-input" placeholder="Type a task and hit enter (e.g. Solve page 14 calculus workbook)..." onkeydown="if(event.key === 'Enter') createNewTask()" class="w-full text-xs bg-white dark:bg-slate-700 px-4 py-3.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-white">
@@ -973,16 +1005,16 @@
                                 </div>
                             </div>
 
-                            <!-- Active Tasks Output List -->
+                            <!-- List -->
                             <div class="p-6">
                                 <div class="flex items-center justify-between mb-4 pb-2 border-b border-slate-100 dark:border-slate-700">
-                                    <h4 class="font-extrabold text-xs text-slate-800 dark:text-white uppercase tracking-wider">Active Study To-Dos</h4>
+                                    <h4 class="font-extrabold text-xs text-slate-800 dark:text-white uppercase tracking-wider">Active To-Dos</h4>
                                     <button onclick="clearAllTasks()" class="admin-only-action text-xs font-bold text-rose-500 hover:underline flex items-center gap-1">
-                                        <i class="fa-solid fa-trash-can"></i> Force Clear Board
+                                        <i class="fa-solid fa-trash-can"></i> Clear Whiteboard
                                     </button>
                                 </div>
                                 <div id="todo-tasks-list" class="space-y-2">
-                                    <!-- Dynamic Tasks -->
+                                    <!-- Dynamic -->
                                 </div>
                             </div>
 
@@ -991,18 +1023,18 @@
 
                     <!-- PANEL 3: CALENDAR HUB -->
                     <section id="panel-calendar" class="tab-panel space-y-6 hidden">
-                        <!-- Calendar connection card -->
+                        <!-- Sync parameters -->
                         <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm p-6 flex flex-col md:flex-row items-center justify-between gap-6">
                             <div class="flex items-start gap-4 flex-1">
                                 <div class="p-4 bg-indigo-50 dark:bg-indigo-550/15 text-indigo-600 dark:text-indigo-400 rounded-xl text-2xl shrink-0"><i class="fa-solid fa-link"></i></div>
                                 <div class="space-y-1">
-                                    <h3 class="font-extrabold text-base text-slate-800 dark:text-white">Academic Calendar Sync</h3>
-                                    <p class="text-xs text-slate-400 leading-relaxed">Connect your calendar to coordinate exams, classes, and project study dates. Admin updates sync instantly to all team members.</p>
+                                    <h3 class="font-extrabold text-base text-slate-800 dark:text-white">Academic Calendar Synchronization</h3>
+                                    <p class="text-xs text-slate-400 leading-relaxed">Simulate Google or Outlook calendar linkages. Class schedule updates added by Admin propagate to all classmates.</p>
                                 </div>
                             </div>
                             <div class="flex flex-col sm:flex-row items-stretch gap-2 w-full md:w-auto shrink-0">
                                 <button onclick="toggleCalendarConnection()" id="btn-connect-calendar" class="admin-only-action bg-indigo-600 hover:bg-indigo-550 text-white font-bold text-xs px-5 py-3.5 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2">
-                                    <i class="fa-solid fa-calendar-plus"></i> Sync Calendar
+                                    <i class="fa-solid fa-calendar-plus"></i> Connect Calendar
                                 </button>
                                 <button onclick="triggerAIStudyPlanner()" id="btn-ai-planner" class="admin-only-action bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-90 text-white font-bold text-xs px-5 py-3.5 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2">
                                     <i class="fa-solid fa-wand-magic-sparkles"></i> AI Study Planner
@@ -1010,21 +1042,20 @@
                             </div>
                         </div>
 
-                        <!-- Connection success banner -->
                         <div id="calendar-sync-banner" class="hidden bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200/60 dark:border-emerald-500/20 rounded-xl p-4 flex items-center justify-between animate-fade-in">
                             <div class="flex items-center gap-3 text-emerald-800 dark:text-emerald-400 text-xs font-bold">
                                 <i class="fa-solid fa-circle-check text-base shrink-0"></i>
-                                <span>Academic Calendar Active! Click "AI Study Planner" to automatically outline tasks from exam dates.</span>
+                                <span>Academic Calendar Active! Click "AI Study Planner" to auto-schedule.</span>
                             </div>
                             <button onclick="disconnectCalendar()" class="admin-only-action text-slate-400 hover:text-rose-500 text-xs font-bold">Disconnect</button>
                         </div>
 
-                        <!-- Calendar Layout Grid -->
+                        <!-- Grid -->
                         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                            <!-- Calendar View -->
+                            <!-- Matrix -->
                             <div class="lg:col-span-2 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 p-6 shadow-sm">
                                 <div class="flex items-center justify-between mb-6">
-                                    <h3 class="font-extrabold text-xs uppercase tracking-widest text-slate-800 dark:text-white">May 2026 Study Grid</h3>
+                                    <h3 class="font-extrabold text-xs uppercase tracking-widest text-slate-800 dark:text-white">May 2026 Academic Grid</h3>
                                     <div class="flex items-center gap-1.5">
                                         <button class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-xs"><i class="fa-solid fa-chevron-left"></i></button>
                                         <span class="text-xs font-bold text-slate-600 dark:text-slate-300">May 2026</span>
@@ -1040,10 +1071,9 @@
                                 </div>
                             </div>
 
-                            <!-- Calendar Event Addition (Admin Only) and Event List -->
                             <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 p-6 shadow-sm flex flex-col justify-between space-y-4">
                                 <div class="admin-only-action">
-                                    <h3 class="font-extrabold text-xs uppercase tracking-widest text-slate-800 dark:text-white mb-4">Add Study Event</h3>
+                                    <h3 class="font-extrabold text-xs uppercase tracking-widest text-slate-800 dark:text-white mb-4">Add Study Block</h3>
                                     <div class="space-y-3">
                                         <div>
                                             <label class="text-[10px] font-bold text-slate-400 uppercase">Event Title</label>
@@ -1060,7 +1090,7 @@
                                             </div>
                                         </div>
                                         <button onclick="createNewEvent()" class="w-full bg-slate-800 dark:bg-indigo-600 hover:bg-slate-700 dark:hover:bg-indigo-550 text-white font-bold text-xs py-3.5 rounded-xl shadow-md transition-all">
-                                            Create Event Block
+                                            Save Event
                                         </button>
                                     </div>
                                 </div>
@@ -1075,17 +1105,13 @@
                         </div>
                     </section>
 
-                    <!-- PANEL 4: SCHOLAR BUDDY AI CHATBOT -->
+                    <!-- PANEL 4: CHATBOT -->
                     <section id="panel-chatbot" class="tab-panel h-[calc(100vh-140px)] flex flex-col justify-between hidden">
-                        
-                        <!-- Chat Container Layout -->
                         <div class="flex-1 flex flex-col md:flex-row gap-6 overflow-hidden h-full">
                             
-                            <!-- Left Chat Box -->
+                            <!-- Messages -->
                             <div class="flex-1 flex flex-col bg-white dark:bg-slate-800 rounded-3xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm overflow-hidden h-full">
-                                
-                                <!-- Chatbot Header -->
-                                <div class="p-4 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200/60 dark:border-slate-700/50 flex items-center justify-between">
+                                <div class="p-4 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200/60 dark:border-slate-700/50 flex items-center justify-between shrink-0">
                                     <div class="flex items-center space-x-3">
                                         <div class="h-10 w-10 bg-indigo-100 dark:bg-indigo-550/20 text-indigo-600 dark:text-indigo-400 rounded-xl flex items-center justify-center text-lg font-bold shrink-0"><i class="fa-solid fa-robot"></i></div>
                                         <div>
@@ -1093,31 +1119,27 @@
                                             <p class="text-[10px] text-emerald-500 font-bold flex items-center gap-1"><span class="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-ping"></span> Gemini AI Secured</p>
                                         </div>
                                     </div>
-                                    <div class="text-right">
-                                        <span class="text-[10px] bg-indigo-50 text-indigo-600 dark:bg-indigo-550/10 dark:text-indigo-400 font-bold px-2.5 py-1 rounded-lg">Gemini 3 Flash Powered</span>
-                                    </div>
+                                    <span class="text-[10px] bg-indigo-50 text-indigo-600 dark:bg-indigo-550/10 dark:text-indigo-400 font-bold px-2.5 py-1 rounded-lg">Gemini 3 Flash Powered</span>
                                 </div>
 
-                                <!-- Active Chat Scroll Area -->
                                 <div id="chatbot-messages-scroll" class="flex-1 overflow-y-auto p-6 space-y-4">
                                     <div class="flex items-start gap-3">
                                         <div class="h-8 w-8 bg-indigo-100 dark:bg-indigo-550/20 text-indigo-600 dark:text-indigo-400 rounded-lg flex items-center justify-center text-sm font-bold shrink-0"><i class="fa-solid fa-robot"></i></div>
                                         <div class="bg-slate-100 dark:bg-slate-700 p-4 rounded-2xl max-w-lg text-xs leading-relaxed text-slate-700 dark:text-slate-200 space-y-2">
-                                            <p class="font-extrabold text-indigo-600 dark:text-indigo-400">Hello! I'm Scholar Buddy, your academic study partner.</p>
-                                            <p>I help with coding, history, science, formulas, or general knowledge questions.</p>
-                                            <p class="font-bold text-[10px] text-slate-400 uppercase tracking-wider pt-1 border-t border-slate-200 dark:border-slate-600">Platform Features:</p>
+                                            <p class="font-extrabold text-indigo-600 dark:text-indigo-400">Hello! I'm Scholar Buddy, your academic assistant.</p>
+                                            <p>I help with coding, history, biology, equations, or general knowledge.</p>
+                                            <p class="font-bold text-[10px] text-slate-400 uppercase tracking-wider pt-1 border-t border-slate-200 dark:border-slate-600">Strict Guidelines:</p>
                                             <ul class="list-disc pl-4 space-y-1">
-                                                <li>Upload an image diagram below. I will explain it!</li>
-                                                <li>I am strictly academic. I refuse to answer non-educational questions.</li>
-                                                <li>Admin can request me to generate notes, docs, presentations, or YouTube search tutorials automatically.</li>
+                                                <li>I only answer questions connected to Studies, Coding, and general knowledge.</li>
+                                                <li>I cannot generate images.</li>
+                                                <li>I can populate Notes, Docs, Presentations, and search YouTube lectures automatically!</li>
                                             </ul>
                                         </div>
                                     </div>
-                                    <!-- Dynamic chat bubbles -->
                                 </div>
 
-                                <!-- Image Upload Preview Bar -->
-                                <div id="chatbot-image-preview-bar" class="hidden px-6 py-2 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 flex items-center justify-between text-xs">
+                                <!-- Preview Image Bar -->
+                                <div id="chatbot-image-preview-bar" class="hidden px-6 py-2 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 flex items-center justify-between text-xs shrink-0">
                                     <div class="flex items-center gap-2">
                                         <i class="fa-solid fa-file-image text-indigo-500 text-lg"></i>
                                         <span class="font-bold text-slate-700 dark:text-slate-200" id="chatbot-image-filename">loaded_diagram.png</span>
@@ -1125,13 +1147,12 @@
                                     <button onclick="clearUploadedImage()" class="text-rose-500 hover:underline font-bold text-xs"><i class="fa-solid fa-trash"></i> Remove</button>
                                 </div>
 
-                                <!-- Loading Indicator -->
-                                <div id="chat-loading-indicator" class="hidden px-6 py-2 flex items-center gap-2 text-slate-400 dark:text-slate-500 text-xs font-semibold">
+                                <div id="chat-loading-indicator" class="hidden px-6 py-2 flex items-center gap-2 text-slate-400 dark:text-slate-500 text-xs font-semibold shrink-0">
                                     <i class="fa-solid fa-spin fa-circle-notch text-indigo-500"></i>
                                     <span>Scholar Buddy is writing study response...</span>
                                 </div>
 
-                                <!-- AI Input Controls -->
+                                <!-- Input Box -->
                                 <div class="p-4 border-t border-slate-200/60 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-800/50 space-y-3 shrink-0">
                                     <div class="flex flex-wrap items-center gap-1.5">
                                         <button onclick="injectChatPrompt('Generate a summary on photosynthesis and create a document')" class="text-[10px] bg-white dark:bg-slate-700 hover:bg-indigo-550/10 text-slate-600 dark:text-slate-200 border border-slate-200 dark:border-slate-600 font-bold px-3 py-1.5 rounded-lg transition-all">
@@ -1140,14 +1161,10 @@
                                         <button onclick="injectChatPrompt('Create Python program for Bubble Sort and save as a Note')" class="text-[10px] bg-white dark:bg-slate-700 hover:bg-indigo-550/10 text-slate-600 dark:text-slate-200 border border-slate-200 dark:border-slate-600 font-bold px-3 py-1.5 rounded-lg transition-all">
                                             <i class="fa-solid fa-code text-indigo-500"></i> Bubble Sort Python Note
                                         </button>
-                                        <button onclick="injectChatPrompt('Prepare a 3-slide presentation on Renewable Energy')" class="text-[10px] bg-white dark:bg-slate-700 hover:bg-indigo-550/10 text-slate-600 dark:text-slate-200 border border-slate-200 dark:border-slate-600 font-bold px-3 py-1.5 rounded-lg transition-all">
-                                            <i class="fa-solid fa-presentation-screen text-blue-500"></i> Renewable Energy Slides
-                                        </button>
                                     </div>
                                     <div class="flex items-center gap-2">
-                                        <!-- Multimodal Attachment input -->
                                         <input type="file" id="chatbot-file-input" accept="image/*" class="hidden" onchange="handleImageFileSelect(event)">
-                                        <button onclick="document.getElementById('chatbot-file-input').click()" class="h-12 w-12 bg-white hover:bg-slate-100 dark:bg-slate-700 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 rounded-xl flex items-center justify-center text-lg transition-all shadow-sm" title="Upload diagram or note snippet">
+                                        <button onclick="document.getElementById('chatbot-file-input').click()" class="h-12 w-12 bg-white hover:bg-slate-100 dark:bg-slate-700 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 rounded-xl flex items-center justify-center text-lg transition-all shadow-sm shrink-0" title="Upload diagram">
                                             <i class="fa-solid fa-image"></i>
                                         </button>
                                         <div class="relative flex-1">
@@ -1156,47 +1173,35 @@
                                         </div>
                                     </div>
                                 </div>
-
                             </div>
-
-                            <!-- Right Tool Status Window -->
+                            
                             <div class="w-full md:w-80 bg-slate-50 dark:bg-slate-800/45 rounded-3xl p-5 border border-slate-200/60 dark:border-slate-700/50 flex flex-col h-full overflow-hidden shrink-0">
-                                <h4 class="font-extrabold text-xs uppercase tracking-wider text-slate-800 dark:text-white mb-3">AI Integration Sandbox</h4>
-                                <p class="text-[10px] text-slate-400 mb-4 font-medium leading-relaxed">Scholar Buddy has permissions to modify and insert tools directly into your student database workspace.</p>
+                                <h4 class="font-extrabold text-xs uppercase tracking-wider text-slate-800 dark:text-white mb-3">AI Sandbox Tools</h4>
+                                <p class="text-[10px] text-slate-400 mb-4 font-medium leading-relaxed font-sans">Scholar Buddy has system authorization to compile, append, and design resource directories.</p>
                                 
                                 <div class="flex-1 flex flex-col space-y-4 overflow-y-auto min-h-0">
                                     <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200/50 dark:border-slate-700/50">
                                         <div class="flex items-center justify-between text-xs font-bold mb-1">
-                                            <span>Notes & Document Maker</span>
-                                            <span class="text-[9px] bg-emerald-100 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-400 px-1.5 py-0.5 rounded font-mono uppercase">Connected</span>
+                                            <span>Whiteboard Notes</span>
+                                            <span class="text-[9px] bg-emerald-100 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-400 px-1.5 py-0.5 rounded font-mono uppercase">Sync Ready</span>
                                         </div>
-                                        <p class="text-[10px] text-slate-400 leading-normal">Creates study reference sheets directly inside the Library Vault.</p>
+                                        <p class="text-[10px] text-slate-400 leading-normal font-sans">Compiles facts, terms, or snippets directly inside Workspace notes.</p>
                                     </div>
-
                                     <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200/50 dark:border-slate-700/50">
                                         <div class="flex items-center justify-between text-xs font-bold mb-1">
-                                            <span>Slides Deck Builder</span>
-                                            <span class="text-[9px] bg-emerald-100 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-400 px-1.5 py-0.5 rounded font-mono uppercase">Connected</span>
+                                            <span>Document Synthesis</span>
+                                            <span class="text-[9px] bg-emerald-100 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-400 px-1.5 py-0.5 rounded font-mono uppercase">Sync Ready</span>
                                         </div>
-                                        <p class="text-[10px] text-slate-400 leading-normal">Outlines elegant slide structures for quick topic presentations.</p>
-                                    </div>
-
-                                    <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200/50 dark:border-slate-700/50">
-                                        <div class="flex items-center justify-between text-xs font-bold mb-1">
-                                            <span>Structured AI Quizzer</span>
-                                            <span class="text-[9px] bg-purple-100 text-purple-800 dark:bg-purple-500/10 dark:text-purple-400 px-1.5 py-0.5 rounded font-mono uppercase">Active</span>
-                                        </div>
-                                        <p class="text-[10px] text-slate-400 leading-normal">Generate multiple choice test sets dynamically from your documents.</p>
+                                        <p class="text-[10px] text-slate-400 leading-normal font-sans">Writes deep-dive summaries about complex theories.</p>
                                     </div>
                                 </div>
                             </div>
-
                         </div>
                     </section>
 
-                    <!-- PANEL 5: MY STUDY WORKSPACE -->
+                    <!-- PANEL 5: WORKSPACE -->
                     <section id="panel-workspace" class="tab-panel space-y-6 hidden">
-                        <!-- Sub navigation links -->
+                        <!-- Navigation tabs -->
                         <div class="flex items-center border-b border-slate-200 dark:border-slate-700/50 pb-px gap-6 shrink-0 overflow-x-auto">
                             <button onclick="selectWorkspaceSub('notes')" id="wsub-notes" class="wsub-item border-b-2 border-indigo-600 px-1 py-3 text-sm font-bold text-indigo-600 dark:text-indigo-400 transition-all flex items-center gap-2 whitespace-nowrap">
                                 <i class="fa-solid fa-note-sticky text-amber-500"></i> Revision Notes
@@ -1205,14 +1210,13 @@
                                 <i class="fa-solid fa-file-invoice text-blue-500"></i> Deep Documents
                             </button>
                             <button onclick="selectWorkspaceSub('slides')" id="wsub-slides" class="wsub-item border-b-2 border-transparent px-1 py-3 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-all flex items-center gap-2 whitespace-nowrap">
-                                <i class="fa-solid fa-presentation-screen text-emerald-500"></i> Study Slide Decks
+                                <i class="fa-solid fa-presentation-screen text-emerald-500"></i> Slide Decks
                             </button>
                         </div>
 
-                        <!-- Sub-panel: Revision Notes -->
+                        <!-- Sub-panel: Notes -->
                         <div id="wsub-panel-notes" class="wsub-panel space-y-6">
                             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                                <!-- Create note (Admin/Individual Only) -->
                                 <div class="admin-only-action bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm space-y-3">
                                     <h3 class="font-extrabold text-xs uppercase tracking-widest text-slate-800 dark:text-white">Create Revision Note</h3>
                                     <div>
@@ -1222,7 +1226,7 @@
                                         <textarea id="note-content" placeholder="Type core facts, terms, or snippets here..." class="w-full text-xs bg-slate-50 dark:bg-slate-700 p-3 rounded-xl border-none focus:ring-2 focus:ring-indigo-500 mt-1 text-slate-800 dark:text-white h-24 font-medium"></textarea>
                                     </div>
                                     <button onclick="createNewNote()" class="w-full bg-slate-800 dark:bg-indigo-600 hover:bg-slate-700 dark:hover:bg-indigo-550 text-white font-bold text-xs py-3.5 rounded-xl shadow-md transition-all">
-                                        Save Study Note
+                                        Save Note
                                     </button>
                                 </div>
 
@@ -1232,7 +1236,7 @@
                             </div>
                         </div>
 
-                        <!-- Sub-panel: Deep Documents -->
+                        <!-- Sub-panel: Docs -->
                         <div id="wsub-panel-docs" class="wsub-panel hidden space-y-6">
                             <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
                                 <div class="lg:col-span-1 bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm h-96 overflow-y-auto flex flex-col justify-between">
@@ -1248,7 +1252,7 @@
                                 </div>
                                 
                                 <div class="lg:col-span-3 bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm flex flex-col justify-between min-h-[400px]">
-                                    <div id="doc-active-editor" class="space-y-4">
+                                    <div id="doc-active-editor" class="space-y-4 font-sans">
                                         <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2 flex-wrap gap-2">
                                             <input type="text" id="active-doc-title" class="admin-only-input text-xl font-bold bg-transparent border-none text-slate-800 dark:text-white focus:ring-0 focus:outline-none w-full md:w-1/2" placeholder="Untitled Document">
                                             <div class="flex items-center gap-1.5 ml-auto">
@@ -1262,7 +1266,7 @@
                                         </div>
                                         <textarea id="active-doc-content" class="admin-only-input w-full text-sm leading-relaxed text-slate-600 dark:text-slate-300 bg-transparent border-none focus:ring-0 focus:outline-none min-h-[250px] resize-y" placeholder="Type document reference, summaries, or reports..."></textarea>
                                     </div>
-                                    <div class="flex items-center justify-between border-t border-slate-100 dark:border-slate-700 pt-4 mt-4">
+                                    <div class="flex items-center justify-between border-t border-slate-100 dark:border-slate-700 pt-4 mt-4 shrink-0">
                                         <button onclick="deleteActiveDocument()" class="admin-only-action text-rose-500 hover:underline text-xs font-bold">Delete Doc</button>
                                         <button onclick="saveActiveDocument()" class="admin-only-action bg-slate-800 dark:bg-indigo-600 hover:bg-slate-700 dark:hover:bg-indigo-550 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all">
                                             Update Document
@@ -1307,7 +1311,7 @@
                                         </div>
                                     </div>
                                     
-                                    <div class="flex items-center justify-between mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+                                    <div class="flex items-center justify-between mt-4 pt-4 border-t border-slate-100 dark:border-slate-700 shrink-0">
                                         <button onclick="deleteActivePresentation()" class="admin-only-action text-rose-500 hover:underline text-xs font-bold">Delete Slide Deck</button>
                                         <div class="flex gap-2">
                                             <button onclick="addSlideToDeck()" class="admin-only-action bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold text-xs px-4 py-2.5 rounded-xl transition-all">+ Add Slide</button>
@@ -1328,13 +1332,13 @@
     <div id="quiz-play-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
         <div class="bg-white dark:bg-slate-800 w-full max-w-xl rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-2xl space-y-4">
             <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2">
-                <h3 class="font-extrabold text-base text-slate-800 dark:text-white flex items-center gap-2">
+                <h3 class="font-extrabold text-base text-slate-800 dark:text-white flex items-center gap-2 font-sans">
                     <i class="fa-solid fa-brain text-pink-500 animate-pulse"></i> Gemini AI Study Quiz
                 </h3>
                 <button onclick="closeQuizModal()" class="text-slate-400 hover:text-rose-500"><i class="fa-solid fa-xmark text-lg"></i></button>
             </div>
             
-            <div id="quiz-question-container" class="space-y-4">
+            <div id="quiz-question-container" class="space-y-4 font-sans">
                 <div class="flex items-center justify-between text-xs text-slate-400">
                     <span id="quiz-progress-text">Question 1 of 5</span>
                     <span id="quiz-score-text">Score: 0/0</span>
@@ -1358,7 +1362,7 @@
     </div>
 
     <!-- Gemini API Settings Modal -->
-    <div id="api-settings-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+    <div id="api-settings-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm font-sans">
         <div class="bg-white dark:bg-slate-800 w-full max-w-md rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-2xl space-y-4">
             <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
                 <h3 class="font-extrabold text-base text-slate-800 dark:text-white flex items-center gap-2">
@@ -1369,14 +1373,14 @@
             
             <div class="space-y-3">
                 <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                    A free Gemini API Key is required to power Scholar Buddy's AI engines. This key will be shared with organization members so they can chat with Scholar Buddy for free.
+                    A free Gemini API Key is required to power Scholar Buddy's AI engines. This key is saved locally or shared securely if managing an Organisation.
                 </p>
                 
                 <div class="p-3 bg-indigo-50 dark:bg-indigo-950/30 rounded-xl border border-indigo-200/50 dark:border-indigo-800/40 text-[11px] text-indigo-700 dark:text-indigo-300">
-                    <span class="font-bold block mb-1">🔑 Get a free API Key:</span>
-                    <ol class="list-decimal pl-4 space-y-1">
+                    <span class="font-bold block mb-1">🔑 Obtain your free token:</span>
+                    <ol class="list-decimal pl-4 space-y-1 font-sans">
                         <li>Visit <a href="https://aistudio.google.com/" target="_blank" class="underline font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-500">Google AI Studio</a></li>
-                        <li>Sign in with any standard Google account.</li>
+                        <li>Authenticate with any Google account.</li>
                         <li>Click <strong>"Get API Key"</strong> and create one for free.</li>
                     </ol>
                 </div>
@@ -1417,7 +1421,7 @@
                 const banner = document.getElementById('notification-banner');
                 const text = document.getElementById('notification-text');
                 
-                banner.className = `mx-6 mt-4 p-3 rounded-xl text-xs font-semibold flex items-center justify-between transition-all duration-300 animate-pulse `;
+                banner.className = `mx-6 mt-4 p-3 rounded-xl text-xs font-semibold flex items-center justify-between transition-all duration-300 animate-pulse shrink-0 `;
                 
                 if (type === "success") {
                     banner.classList.add("bg-indigo-50", "text-indigo-700", "dark:bg-indigo-500/10", "dark:text-indigo-400", "border", "border-indigo-500/20");
@@ -1504,7 +1508,6 @@
             }
         }
 
-        // Midnight Reset Loop Setup
         function startMidnightCountdown() {
             setInterval(() => {
                 const now = new Date();
@@ -1550,7 +1553,7 @@
 
         function updateApiStatusIndicators() {
             const isLocal = window.location.protocol === 'file:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-            const hasKey = !!window.appState.apiKey;
+            const hasKey = !!window.appState.apiKey || !!window.appState.orgAdminKey;
             
             const warningBadge = document.getElementById('local-key-warning');
             const statusDot = document.getElementById('api-status-dot');
@@ -1574,11 +1577,11 @@
             }
 
             static checkAndClearExpiredTasks() {
-                const lastCheckDate = localStorage.getItem('scholarbud_last_date');
                 const todayStr = new Date().toLocaleDateString();
+                const lastCheckDate = localStorage.getItem('scholarbud_last_date');
 
                 if (lastCheckDate && lastCheckDate !== todayStr) {
-                    console.log("New day detected! Clearing task board.");
+                    console.log("New day detected! Purging whiteboard tasks.");
                     window.appState.tasks = [];
                     localStorage.setItem('scholarbud_last_date', todayStr);
                     
@@ -1588,7 +1591,7 @@
                         localStorage.setItem(this.getStorageKey(), JSON.stringify([]));
                     }
                     
-                    NotificationManager.show("New day! Your tasks have been cleared automatically.", "info");
+                    NotificationManager.show("A new day has started! Your task board has auto-purged.", "info");
                     return true;
                 }
                 localStorage.setItem('scholarbud_last_date', todayStr);
@@ -1602,7 +1605,7 @@
             }
 
             static async saveTasks() {
-                this.checkAndClearExpiredTasks();
+                localStorage.setItem('scholarbud_last_date', new Date().toLocaleDateString());
                 const items = window.appState.tasks;
                 localStorage.setItem(this.getStorageKey(), JSON.stringify(items));
                 renderApp();
@@ -1646,9 +1649,8 @@
         }
 
         async function toggleTask(id) {
-            // Guard: Members cannot check off admin tasks
             if (window.appState.userMode === 'member') {
-                NotificationManager.show("You cannot complete or check tasks inside this Organisation. Ask Admin to check it!", "error");
+                NotificationManager.show("You cannot complete or check tasks inside this classroom. Ask Admin to check it!", "error");
                 return;
             }
 
@@ -1728,12 +1730,12 @@
 
             if (!query && !window.appState.uploadedImageBase64) return;
 
-            // Resolve effective API key to use
+            // Resolve proper API key to query based on active role
             const activeKey = (window.appState.userMode === 'member') ? window.appState.orgAdminKey : window.appState.apiKey;
 
             if (!activeKey) {
                 openApiKeyModal();
-                NotificationManager.show("Please configure your free Gemini API Key first to enable chatbot responses.", "error");
+                NotificationManager.show("Please configure your Gemini API Key to enable AI responses.", "error");
                 return;
             }
 
@@ -1747,7 +1749,7 @@
                 appendChatBubble('bot', responseText);
             } catch (e) {
                 console.error("AI Generation Error: ", e);
-                appendChatBubble('bot', "Sorry, I had issues connecting to the Gemini servers. Ensure your API key is configured correctly.");
+                appendChatBubble('bot', "I had issues connecting to the Gemini engines. Please double check that your API key is correct.");
             } finally {
                 document.getElementById('chat-loading-indicator').classList.add('hidden');
                 clearUploadedImage();
@@ -1762,6 +1764,7 @@
 
         function appendChatBubble(sender, text) {
             const container = document.getElementById('chatbot-messages-scroll');
+            if (!container) return;
             const bubble = document.createElement('div');
             bubble.className = "flex items-start gap-3 animate-fade-in";
 
@@ -1811,7 +1814,6 @@
             NOTE: If the user has a Member role, you cannot call workspace modifications (createNote, createDocument, createPresentation) as they are read-only, but you can search tutorials (searchYouTube) or guide them textually.
             `;
 
-            // Tool parameters
             const tools = [{
                 functionDeclarations: [
                     {
@@ -1836,33 +1838,6 @@
                                 content: { type: 'STRING', description: 'Detailed full study notes text content' }
                             },
                             required: ['title', 'content']
-                        }
-                    },
-                    {
-                        name: 'createPresentation',
-                        description: 'Designs an interactive slides deck.',
-                        parameters: {
-                            type: 'OBJECT',
-                            properties: {
-                                title: { type: 'STRING', description: 'Presentation Topic Header' },
-                                slides: {
-                                    type: 'ARRAY',
-                                    description: 'List of individual slide bodies',
-                                    items: {
-                                        type: 'OBJECT',
-                                        properties: {
-                                            title: { type: 'STRING', description: 'Individual slide title' },
-                                            bullets: {
-                                                type: 'ARRAY',
-                                                description: 'Key bullet summaries',
-                                                items: { type: 'STRING' }
-                                            }
-                                        },
-                                        required: ['title', 'bullets']
-                                    }
-                                }
-                            },
-                            required: ['title', 'slides']
                         }
                     },
                     {
@@ -1911,7 +1886,6 @@
                 if (candidate.content?.parts?.[0]?.functionCall) {
                     const fc = candidate.content.parts[0].functionCall;
                     
-                    // Verify if user is Member (locked to read-only for notes/docs/presentations)
                     if (window.appState.userMode === 'member' && fc.name !== 'searchYouTube') {
                         return "I recognized your request to update workspace documents, but because you are joined as a Member in this Organisation, you cannot make modifications. Please ask your Administrator to add these materials!";
                     }
@@ -1964,24 +1938,6 @@
                 return `[AI Tool Activated] I created a Deep Document: "${args.title}". Find and edit it in 'My Workspace' -> Deep Documents!`;
             }
 
-            if (name === 'createPresentation') {
-                const pres = {
-                    id: crypto.randomUUID(),
-                    title: args.title || 'AI Slide Structure',
-                    slides: args.slides || []
-                };
-                window.appState.presentations.push(pres);
-                window.currentPresentationId = pres.id;
-                window.currentSlideIndex = 0;
-                if (window.appState.userMode === 'admin') {
-                    await saveAdminOrganisationData();
-                } else {
-                    renderApp();
-                }
-                NotificationManager.show(`New Slide Deck created: "${pres.title}"!`, "success");
-                return `[AI Tool Activated] I designed a slide deck titled: "${args.title}" with ${args.slides.length} slides. Open 'My Workspace' -> Study Slide Decks to present them!`;
-            }
-
             if (name === 'searchYouTube') {
                 executeYouTubeFetch(args.query);
                 NotificationManager.show(`YouTube lessons populated for: "${args.query}"`, "info");
@@ -2004,7 +1960,7 @@
 
             if (!activeKey) {
                 openApiKeyModal();
-                NotificationManager.show("Please configure your free Gemini API Key to compile AI quizzes.", "error");
+                NotificationManager.show("Please configure your Gemini API Key to compile AI quizzes.", "error");
                 return;
             }
 
@@ -2131,7 +2087,7 @@
                 
                 const grid = document.getElementById('quiz-options-grid');
                 grid.innerHTML = `
-                    <div class="text-center py-6 space-y-3">
+                    <div class="text-center py-6 space-y-3 font-sans">
                         <i class="fa-solid fa-trophy text-amber-500 text-5xl animate-bounce"></i>
                         <h4 class="font-extrabold text-sm text-slate-800 dark:text-white">Quiz Complete!</h4>
                         <p class="text-xs text-slate-500 dark:text-slate-400 font-medium">You scored ${score} out of ${total} points. Excellent study loop!</p>
@@ -2156,7 +2112,7 @@
 
             if (!activeKey) {
                 openApiKeyModal();
-                NotificationManager.show("Please configure your free Gemini API Key to use the AI Study Planner.", "error");
+                NotificationManager.show("Please configure your Gemini API Key to use the AI Study Planner.", "error");
                 return;
             }
 
@@ -2236,7 +2192,7 @@
                     
                     document.getElementById('chatbot-image-filename').innerText = file.name;
                     document.getElementById('chatbot-image-preview-bar').classList.remove('hidden');
-                    NotificationManager.show("Diagram image attached! Scholar Buddy is ready to explain.", "success");
+                    NotificationManager.show("Diagram image attached! Scholar Buddy is ready to analyze.", "success");
                 };
                 reader.readAsDataURL(file);
             }
@@ -2244,12 +2200,12 @@
 
         function clearUploadedImage() {
             window.appState.uploadedImageBase64 = null;
-            document.getElementById('chatbot-file-input').value = '';
-            document.getElementById('chatbot-image-preview-bar').classList.add('hidden');
+            const fileInput = document.getElementById('chatbot-file-input');
+            if (fileInput) fileInput.value = '';
+            const previewBar = document.getElementById('chatbot-image-preview-bar');
+            if (previewBar) previewBar.classList.add('hidden');
         }
-    </script>
 
-    <script>
         async function triggerAIVoiceAloud() {
             if (window.appState.voicePlaying) {
                 stopAIVoice();
@@ -2266,7 +2222,7 @@
 
             if (!activeKey) {
                 openApiKeyModal();
-                NotificationManager.show("Please configure your free Gemini API Key to use AI Voice Aloud.", "error");
+                NotificationManager.show("Please configure your Gemini API Key to use AI Voice Aloud.", "error");
                 return;
             }
 
@@ -2630,7 +2586,7 @@
                     throw new Error();
                 }
             } catch (error) {
-                NotificationManager.show("Invalid slide layout configuration. format: [{'title': '...', 'bullets': [...]}]", "error");
+                NotificationManager.show("Invalid slide layout configuration. Format: [{'title': '...', 'bullets': [...]}]", "error");
             }
         }
     </script>
@@ -2753,6 +2709,7 @@
 
         function renderYouTubeResults() {
             const container = document.getElementById('youtube-results-container');
+            if (!container) return;
             container.innerHTML = '';
 
             if (window.appState.youtubeResults.length === 0) {
@@ -2787,7 +2744,10 @@
     <script>
         function renderApp() {
             const activeCount = window.appState.tasks.filter(t => !t.completed).length;
-            document.getElementById('task-badge').innerText = activeCount;
+            const taskBadge = document.getElementById('task-badge');
+            if (taskBadge) {
+                taskBadge.innerText = activeCount;
+            }
 
             renderTasksList();
             renderTaskDashboardProgress();
@@ -2799,13 +2759,13 @@
             renderPresentationsSelector();
             renderActiveSlide();
             
-            // Sync status indicators based on active key
             updateApiStatusIndicators();
             configureUserInterfacePrivileges();
         }
 
         function renderTasksList() {
             const list = document.getElementById('todo-tasks-list');
+            if (!list) return;
             list.innerHTML = '';
 
             if (window.appState.tasks.length === 0) {
@@ -2865,25 +2825,34 @@
             const completed = window.appState.tasks.filter(t => t.completed).length;
             const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-            document.getElementById('dash-task-percent').innerText = `${percentage}%`;
+            const percentLabel = document.getElementById('dash-task-percent');
+            if (percentLabel) {
+                percentLabel.innerText = `${percentage}%`;
+            }
             
             const ring = document.getElementById('dash-task-ring');
-            const offset = 201 - (201 * percentage) / 100;
-            ring.setAttribute('stroke-dashoffset', offset);
+            if (ring) {
+                const offset = 201 - (201 * percentage) / 100;
+                ring.setAttribute('stroke-dashoffset', offset);
+            }
 
             const statusText = document.getElementById('dash-task-status-text');
-            if (total === 0) {
-                statusText.innerText = "No active milestones outlined for today yet.";
-            } else if (percentage === 100) {
-                statusText.innerText = "Exceptional work! All milestones are completed.";
-            } else {
-                statusText.innerText = `Finished ${completed} out of ${total} study milestones today.`;
+            if (statusText) {
+                if (total === 0) {
+                    statusText.innerText = "No active milestones outlined for today yet.";
+                } else if (percentage === 100) {
+                    statusText.innerText = "Exceptional work! All milestones are completed.";
+                } else {
+                    statusText.innerText = `Finished ${completed} out of ${total} study milestones today.`;
+                }
             }
         }
 
         function renderAgendaList() {
             const container = document.getElementById('agenda-event-list');
             const sneakPeek = document.getElementById('dash-upcoming-events');
+            
+            if (!container || !sneakPeek) return;
             
             container.innerHTML = '';
             sneakPeek.innerHTML = '';
@@ -2916,7 +2885,7 @@
 
             const first = events[0];
             sneakPeek.innerHTML = `
-                <div class="p-3 bg-indigo-50/50 dark:bg-indigo-500/10 rounded-xl border border-indigo-200/30">
+                <div class="p-3 bg-indigo-50/50 dark:bg-indigo-550/10 rounded-xl border border-indigo-200/30">
                     <span class="text-[9px] bg-indigo-100 text-indigo-700 dark:bg-indigo-550/20 dark:text-indigo-400 px-2 py-0.5 rounded font-bold uppercase">Next Up</span>
                     <h5 class="text-xs font-black text-slate-800 dark:text-slate-100 mt-1 truncate">${first.title}</h5>
                     <p class="text-[10px] text-slate-400 font-bold mt-0.5"><i class="fa-regular fa-clock"></i> ${first.date} at ${first.time}</p>
@@ -2967,9 +2936,13 @@
         }
 
         function renderWorkspaceCounts() {
-            document.getElementById('dash-note-count').innerText = window.appState.notes.length;
-            document.getElementById('dash-doc-count').innerText = window.appState.documents.length;
-            document.getElementById('dash-slide-count').innerText = window.appState.presentations.length;
+            const notesLabel = document.getElementById('dash-note-count');
+            const docsLabel = document.getElementById('dash-doc-count');
+            const slidesLabel = document.getElementById('dash-slide-count');
+            
+            if (notesLabel) notesLabel.innerText = window.appState.notes.length;
+            if (docsLabel) docsLabel.innerText = window.appState.documents.length;
+            if (slidesLabel) slidesLabel.innerText = window.appState.presentations.length;
         }
 
         function renderNotesGrid() {
@@ -3049,26 +3022,34 @@
 
             const slide = activePres.slides[window.currentSlideIndex];
             if (slide) {
-                document.getElementById('active-slide-title').innerText = slide.title;
-                document.getElementById('slide-number-indicator').innerText = `Slide ${window.currentSlideIndex + 1} of ${activePres.slides.length}`;
+                const activeSlideTitle = document.getElementById('active-slide-title');
+                const slideNumberIndicator = document.getElementById('slide-number-indicator');
+                
+                if (activeSlideTitle) activeSlideTitle.innerText = slide.title;
+                if (slideNumberIndicator) slideNumberIndicator.innerText = `Slide ${window.currentSlideIndex + 1} of ${activePres.slides.length}`;
 
                 const list = document.getElementById('active-slide-bullets');
-                list.innerHTML = '';
-                slide.bullets.forEach(point => {
-                    const li = document.createElement('li');
-                    li.innerText = point;
-                    list.appendChild(li);
-                });
+                if (list) {
+                    list.innerHTML = '';
+                    slide.bullets.forEach(point => {
+                        const li = document.createElement('li');
+                        li.innerText = point;
+                        list.appendChild(li);
+                    });
+                }
             }
         }
     </script>
 
     <script>
-        // Start engine functions on complete body load
+        // Start engine functions on complete window load
         window.onload = async function() {
             // Update Date Header
             const opt = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-            document.getElementById('current-date-string').innerText = new Date().toLocaleDateString('en-US', opt);
+            const currentHeaderDate = document.getElementById('current-date-string');
+            if (currentHeaderDate) {
+                currentHeaderDate.innerText = new Date().toLocaleDateString('en-US', opt);
+            }
 
             // Start countdown clocks
             startMidnightCountdown();
