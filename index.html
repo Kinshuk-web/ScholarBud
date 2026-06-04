@@ -72,6 +72,7 @@
             notes: [],
             documents: [],
             presentations: [],
+            members: [], // Classroom Directory Admin/Student array
             chatHistory: [],
             youtubeResults: [],
             isCalendarConnected: false,
@@ -121,6 +122,9 @@
                         
                         // Proceed to corresponding setup screen depending on active selection
                         handleAuthenticatedTransition();
+                    } else {
+                        // Logged out
+                        window.appState.userId = null;
                     }
                 });
             } catch (error) {
@@ -135,14 +139,10 @@
                     await signInWithPopup(window.auth, window.googleProvider);
                 } catch (error) {
                     console.error("Google Auth popup failed:", error);
-                    if (window.location.protocol === 'file:') {
-                        showLocalBypassModal();
-                    } else {
-                        alert("Authentication error: " + error.message);
-                    }
+                    showLocalRestrictionModal();
                 }
             } else {
-                showLocalBypassModal();
+                showLocalRestrictionModal();
             }
         };
 
@@ -168,19 +168,38 @@
 
         // Decides initial rendering layout
         function evaluateModeSelection() {
-            const hasMode = !!window.appState.userMode;
-            if (hasMode) {
+            const mode = window.appState.userMode;
+            const isOrgMode = (mode === 'admin' || mode === 'member');
+            const hasUser = !!window.appState.userId;
+
+            if (mode === 'individual') {
+                // Individual Sandbox works immediately without login barriers
+                configureUserInterfacePrivileges();
+                document.getElementById('welcome-auth-card').classList.add('hidden');
+                document.getElementById('app-main-layout').classList.remove('hidden');
+                initializeWorkspaceData();
+            } else if (isOrgMode && hasUser) {
+                // Org flows are validated only when fully logged in via Google
                 configureUserInterfacePrivileges();
                 document.getElementById('welcome-auth-card').classList.add('hidden');
                 document.getElementById('app-main-layout').classList.remove('hidden');
                 initializeWorkspaceData();
             } else {
+                // Block unknown/empty workspace loads. Keep on Onboarding welcome screen.
                 document.getElementById('welcome-auth-card').classList.remove('hidden');
                 document.getElementById('landing-selection-panel').classList.remove('hidden');
                 document.getElementById('auth-verification-panel').classList.add('hidden');
                 document.getElementById('org-details-form').classList.add('hidden');
                 document.getElementById('org-join-form').classList.add('hidden');
                 document.getElementById('app-main-layout').classList.add('hidden');
+                
+                // Reset mode to prevent ghost entries
+                if (isOrgMode && !hasUser) {
+                    localStorage.removeItem('scholarbud_user_mode');
+                    localStorage.removeItem('scholarbud_org_code');
+                    localStorage.removeItem('scholarbud_org_name');
+                    window.appState.userMode = '';
+                }
             }
         }
 
@@ -249,6 +268,7 @@
                 window.appState.notes = StudyWorkspaceManager.getMockNotes();
                 window.appState.documents = StudyWorkspaceManager.getMockDocs();
                 window.appState.presentations = StudyWorkspaceManager.getMockPresentations();
+                window.appState.members = [];
                 renderApp();
             }
         }
@@ -289,36 +309,25 @@
             }
         }
 
-        // Direct Local Notepad Authentication Simulator for file:// protocol environments
-        function showLocalBypassModal() {
-            document.getElementById('local-bypass-modal').classList.remove('hidden');
+        // Local Notepad browser security block prompt
+        function showLocalRestrictionModal() {
+            document.getElementById('local-restriction-modal').classList.remove('hidden');
         }
 
-        function closeLocalBypassModal() {
-            document.getElementById('local-bypass-modal').classList.add('hidden');
+        function closeLocalRestrictionModal() {
+            document.getElementById('local-restriction-modal').classList.add('hidden');
         }
 
-        function submitLocalBypassAuth() {
-            const input = document.getElementById('bypass-nickname-input').value.trim();
-            if (!input) {
-                alert("Please type an offline student name!");
-                return;
-            }
-
-            window.appState.userId = 'sim-local-' + Math.floor(1000 + Math.random() * 9000);
-            window.appState.userEmail = input.toLowerCase().replace(/\s+/g, '') + '@offline.com';
-            window.appState.userDisplayName = input;
-            window.appState.userPhotoURL = '';
-            
-            closeLocalBypassModal();
-            handleAuthenticatedTransition();
-        }
-
-        // Create Organisation Submission (Admin)
+        // Create Organisation Submission (Admin with real Google account data)
         async function submitOrganisationCreation() {
             const orgNameInput = document.getElementById('create-org-name').value.trim();
             if (!orgNameInput) {
                 alert("Please provide a name for your Organisation!");
+                return;
+            }
+
+            if (!window.appState.userId) {
+                alert("Google verification is strictly required to host a class workspace.");
                 return;
             }
 
@@ -337,6 +346,16 @@
                 localStorage.setItem('scholarbud_api_key', adminKeyInput);
             }
 
+            // Create profile structure in directory
+            const adminProfile = {
+                uid: window.appState.userId,
+                name: window.appState.userDisplayName || 'Classroom Teacher',
+                email: window.appState.userEmail || 'Admin Contact',
+                photo: window.appState.userPhotoURL || '',
+                role: 'admin',
+                joinedAt: new Date().toISOString()
+            };
+
             // Initialize classroom whiteboard elements
             window.appState.tasks = [
                 { id: 't-init', text: `Welcome to ${orgNameInput}! This task was added by the Admin.`, completed: false, category: 'Studies', addedTime: new Date().getTime() }
@@ -348,13 +367,14 @@
                 { id: 'd-init', title: 'Organisation Introduction', content: 'Students can read this and generate multiple choice quizzes or run AI speech summaries.' }
             ];
             window.appState.presentations = StudyWorkspaceManager.getMockPresentations();
+            window.appState.members = [adminProfile];
 
             await saveAdminOrganisationData();
             evaluateModeSelection();
             NotificationManager.show(`Whiteboard online! Code: ${generatedCode}`, "success");
         }
 
-        // Join Organisation Submission (Member)
+        // Join Organisation Submission (Member with strict Google registration)
         async function submitOrganisationJoin() {
             const nickInput = document.getElementById('join-student-nickname').value.trim();
             const codeInput = document.getElementById('join-org-code').value.trim().toUpperCase();
@@ -364,7 +384,12 @@
                 return;
             }
 
-            NotificationManager.show("Verifying whiteboard parameters...", "info");
+            if (!window.appState.userId) {
+                alert("Please authenticate using your Google account to secure classroom files.");
+                return;
+            }
+
+            NotificationManager.show("Verifying workspace parameters...", "info");
 
             let successfulJoin = false;
             
@@ -375,11 +400,29 @@
                     if (snap.exists()) {
                         const cloudData = snap.data();
                         
+                        // Register member parameters in real-time synced directory
+                        let activeMembers = cloudData.members || [];
+                        const exists = activeMembers.some(m => m.uid === window.appState.userId);
+                        if (!exists) {
+                            activeMembers.push({
+                                uid: window.appState.userId,
+                                name: nickInput,
+                                email: window.appState.userEmail || '',
+                                photo: window.appState.userPhotoURL || '',
+                                role: 'member',
+                                joinedAt: new Date().toISOString()
+                            });
+                        }
+
+                        // Save updated profile registry to cloud
+                        await window.setDoc(orgRef, { ...cloudData, members: activeMembers });
+
                         window.appState.userMode = 'member';
                         window.appState.orgCode = codeInput;
                         window.appState.orgName = cloudData.orgName;
                         window.appState.orgAdminKey = cloudData.adminApiKey || '';
                         window.appState.memberName = nickInput;
+                        window.appState.members = activeMembers;
 
                         localStorage.setItem('scholarbud_user_mode', 'member');
                         localStorage.setItem('scholarbud_org_code', codeInput);
@@ -393,32 +436,11 @@
                 }
             }
 
-            // Fallback to local offline cache verification
-            if (!successfulJoin) {
-                const localBackup = localStorage.getItem(`scholarbud_sim_org_${codeInput}`);
-                if (localBackup) {
-                    const backupData = JSON.parse(localBackup);
-                    
-                    window.appState.userMode = 'member';
-                    window.appState.orgCode = codeInput;
-                    window.appState.orgName = backupData.orgName;
-                    window.appState.orgAdminKey = backupData.adminApiKey || '';
-                    window.appState.memberName = nickInput;
-
-                    localStorage.setItem('scholarbud_user_mode', 'member');
-                    localStorage.setItem('scholarbud_org_code', codeInput);
-                    localStorage.setItem('scholarbud_org_name', backupData.orgName);
-                    localStorage.setItem('scholarbud_member_name', nickInput);
-
-                    successfulJoin = true;
-                }
-            }
-
             if (successfulJoin) {
                 evaluateModeSelection();
                 NotificationManager.show(`Successfully joined classroom: "${window.appState.orgName}"`, "success");
             } else {
-                NotificationManager.show("Organisation not found. Please double-check the Code with your Admin.", "error");
+                NotificationManager.show("Organisation not found or cloud communication is offline. Check credentials.", "error");
             }
         }
 
@@ -439,6 +461,7 @@
                 window.appState.userEmail = null;
                 window.appState.userDisplayName = null;
                 window.appState.userPhotoURL = null;
+                window.appState.members = [];
 
                 // Stop synchronous listener
                 if (window.unsubscribeOrgSync) {
@@ -465,6 +488,7 @@
                 orgName: window.appState.orgName,
                 adminUserId: window.appState.userId,
                 adminApiKey: window.appState.apiKey,
+                members: window.appState.members || [],
                 tasks: window.appState.tasks,
                 calendarEvents: window.appState.calendarEvents,
                 notes: window.appState.notes,
@@ -473,17 +497,15 @@
                 lastUpdated: new Date().toISOString()
             };
 
-            // Public Data path as per RULE 1
             if (window.db) {
                 try {
                     const orgDocRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'orgs', window.appState.orgCode);
                     await window.setDoc(orgDocRef, orgStructure);
                 } catch (e) {
-                    console.error("Firebase write bypassed. Saving to offline backup matrix.", e);
+                    console.error("Firebase write error:", e);
                 }
             }
 
-            localStorage.setItem(`scholarbud_sim_org_${window.appState.orgCode}`, JSON.stringify(orgStructure));
             renderApp();
         }
 
@@ -502,23 +524,12 @@
                         window.appState.notes = cloudData.notes || [];
                         window.appState.documents = cloudData.documents || [];
                         window.appState.presentations = cloudData.presentations || [];
+                        window.appState.members = cloudData.members || [];
                         window.appState.apiKey = cloudData.adminApiKey || window.appState.apiKey;
                         loaded = true;
                     }
                 } catch (e) {
-                    console.error("Firebase read bypassed. Checking local backup dictionary.", e);
-                }
-            }
-
-            if (!loaded) {
-                const localBackup = localStorage.getItem(`scholarbud_sim_org_${window.appState.orgCode}`);
-                if (localBackup) {
-                    const backupData = JSON.parse(localBackup);
-                    window.appState.tasks = backupData.tasks || [];
-                    window.appState.calendarEvents = backupData.calendarEvents || [];
-                    window.appState.notes = backupData.notes || [];
-                    window.appState.documents = backupData.documents || [];
-                    window.appState.presentations = backupData.presentations || [];
+                    console.error("Firebase load error:", e);
                 }
             }
             renderApp();
@@ -539,38 +550,19 @@
                             window.appState.notes = cloudData.notes || [];
                             window.appState.documents = cloudData.documents || [];
                             window.appState.presentations = cloudData.presentations || [];
+                            window.appState.members = cloudData.members || [];
                             window.appState.orgAdminKey = cloudData.adminApiKey || '';
                             
                             renderApp();
-                            console.log("Whiteboard live sync updated!");
+                            console.log("Whiteboard directory and cards live synced!");
                         }
                     }, (err) => {
                         console.error("Realtime sync disrupted:", err);
                     });
-                    return;
                 } catch (e) {
-                    console.warn("Realtime sync unavailable on file system. Activating memory poll.", e);
+                    console.warn("Realtime sync error:", e);
                 }
             }
-
-            // Local Notepad polling fallback to test Admin vs Member roles in parallel browser tabs
-            const pollingInterval = setInterval(() => {
-                if (window.appState.userMode !== 'member') {
-                    clearInterval(pollingInterval);
-                    return;
-                }
-                const backup = localStorage.getItem(`scholarbud_sim_org_${targetCode}`);
-                if (backup) {
-                    const backupData = JSON.parse(backup);
-                    window.appState.tasks = backupData.tasks || [];
-                    window.appState.calendarEvents = backupData.calendarEvents || [];
-                    window.appState.notes = backupData.notes || [];
-                    window.appState.documents = backupData.documents || [];
-                    window.appState.presentations = backupData.presentations || [];
-                    window.appState.orgAdminKey = backupData.adminApiKey || '';
-                    renderApp();
-                }
-            }, 2500);
         }
     </script>
 
@@ -589,7 +581,7 @@
                 </div>
             </div>
 
-            <!-- PANEL A: Onboarding Landing Selection (No forced login first!) -->
+            <!-- PANEL A: Onboarding Landing Selection -->
             <div id="landing-selection-panel" class="space-y-6">
                 <div class="text-center">
                     <h2 class="text-xl font-extrabold text-white">Choose Your Study Path</h2>
@@ -602,7 +594,7 @@
                         <div class="space-y-2">
                             <div class="h-10 w-10 bg-emerald-500/20 text-emerald-400 rounded-xl flex items-center justify-center text-lg"><i class="fa-solid fa-user"></i></div>
                             <h3 class="text-xs font-bold text-white uppercase tracking-wider">Use as Individual</h3>
-                            <p class="text-[11px] text-slate-400 leading-relaxed">No Google Sign-In required. Store all notes, to-dos, documents, and calendar blocks privately on your device.</p>
+                            <p class="text-[11px] text-slate-400 leading-relaxed">No Google Sign-In required. Store all notes, to-dos, and milestones privately on your device.</p>
                         </div>
                         <span class="text-[10px] text-emerald-400 font-bold block mt-4">Launch Local Sandbox <i class="fa-solid fa-arrow-right"></i></span>
                     </div>
@@ -622,14 +614,14 @@
                         <div class="space-y-2">
                             <div class="h-10 w-10 bg-amber-500/20 text-amber-400 rounded-xl flex items-center justify-center text-lg"><i class="fa-solid fa-users"></i></div>
                             <h3 class="text-xs font-bold text-white uppercase tracking-wider">Join Organisation</h3>
-                            <p class="text-[11px] text-slate-400 leading-relaxed">Requires Google sign-in. Type in an Org code to access the Admin's shared whiteboard in read-only mode.</p>
+                            <p class="text-[11px] text-slate-400 leading-relaxed">Requires Google sign-in. Type in an Org code to access the Admin's shared whiteboard and see active members.</p>
                         </div>
                         <span class="text-[10px] text-amber-400 font-bold block mt-4">Enter Classroom Code <i class="fa-solid fa-arrow-right"></i></span>
                     </div>
                 </div>
             </div>
 
-            <!-- PANEL B: Google Verification Block (Triggered *only* for Create/Join Org) -->
+            <!-- PANEL B: Google Verification Block -->
             <div id="auth-verification-panel" class="hidden text-center space-y-6">
                 <div class="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl inline-block">
                     <i class="fa-solid fa-shield-halved text-indigo-400 text-3xl"></i>
@@ -697,25 +689,22 @@
         </div>
     </div>
 
-    <!-- Offline Bypass Modal (For when file:// protocol stops Google Sign-In window popups) -->
-    <div id="local-bypass-modal" class="hidden fixed inset-0 bg-black/75 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-        <div class="bg-slate-800 border border-slate-700/60 p-6 rounded-2xl max-w-sm w-full space-y-4 text-center">
-            <div class="p-3 bg-amber-500/10 border border-amber-500/30 rounded-full inline-block">
-                <i class="fa-solid fa-triangle-exclamation text-amber-500 text-xl"></i>
+    <!-- Notepad execution warning restriction modal (strictly educational context) -->
+    <div id="local-restriction-modal" class="hidden fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 backdrop-blur-md">
+        <div class="bg-slate-800 border border-slate-700/60 p-6 rounded-2xl max-w-sm w-full space-y-4 text-center font-sans">
+            <div class="p-3 bg-rose-500/10 border border-rose-500/30 rounded-full inline-block">
+                <i class="fa-solid fa-lock text-rose-500 text-xl"></i>
             </div>
-            <h4 class="font-extrabold text-sm text-white">Local Execution Detected</h4>
+            <h4 class="font-extrabold text-sm text-white">Google Authentication Blocked</h4>
             <p class="text-xs text-slate-300 leading-normal">
-                Because this webpage is running locally as a raw Notepad file (`file://` protocol), your browser blockades standard Google Sign-In windows.
+                Because your browser blocks authorization popups inside local files (`file://` protocol), **Create** and **Join** workspace functions are restricted.
             </p>
-            <p class="text-[11px] text-slate-400 leading-normal font-bold bg-slate-900/50 p-2.5 rounded-xl border border-slate-700">
-                To simulate organization features offline, type an administrator name below to proceed instantly.
+            <p class="text-[11px] text-amber-300 leading-normal font-bold bg-slate-950 p-2.5 rounded-xl border border-amber-500/20">
+                To fix: Upload your HTML file to a web server, run it via local server software (such as Live Server), or click below to study offline in Individual Mode.
             </p>
-
-            <input type="text" id="bypass-nickname-input" placeholder="e.g. Local Admin Student" class="w-full text-xs bg-slate-950 p-3 rounded-xl border border-slate-700 text-white focus:outline-none">
-
-            <div class="flex gap-2 font-bold text-xs">
-                <button onclick="closeLocalBypassModal()" class="w-1/3 bg-slate-700 text-slate-300 py-2.5 rounded-xl">Cancel</button>
-                <button onclick="submitLocalBypassAuth()" class="w-2/3 bg-indigo-600 text-white py-2.5 rounded-xl">Launch Simulator</button>
+            <div class="flex gap-2 font-bold text-xs pt-2">
+                <button onclick="closeLocalRestrictionModal()" class="w-1/2 bg-slate-700 text-slate-300 py-2.5 rounded-xl">Got It</button>
+                <button onclick="closeLocalRestrictionModal(); selectUserJourney('individual')" class="w-1/2 bg-emerald-600 text-white py-2.5 rounded-xl">Use Individual</button>
             </div>
         </div>
     </div>
@@ -729,7 +718,7 @@
             
             <!-- Sidebar Navigation -->
             <aside id="sidebar" class="w-64 bg-slate-800 text-slate-100 flex flex-col justify-between border-r border-slate-700 transition-all duration-300 md:relative absolute z-30 h-full -left-64 md:left-0 shrink-0">
-                <div class="p-5 flex flex-col h-full justify-between overflow-y-auto">
+                <div class="p-5 flex flex-col h-full justify-between overflow-y-auto font-medium">
                     <div>
                         <!-- Logo / Brand -->
                         <div class="flex items-center space-x-3 mb-8">
@@ -753,28 +742,28 @@
                         </div>
 
                         <!-- Navigation Items -->
-                        <nav class="space-y-1.5">
-                            <button onclick="switchTab('dashboard')" id="nav-dashboard" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all text-slate-300 hover:bg-slate-700/50 hover:text-white">
-                                <i class="fa-solid fa-house-laptop text-lg w-6"></i>
+                        <nav class="space-y-1.5 font-sans">
+                            <button onclick="switchTab('dashboard')" id="nav-dashboard" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all text-slate-300 hover:bg-slate-700/50 hover:text-white">
+                                <i class="fa-solid fa-house-laptop text-lg w-6 text-indigo-400"></i>
                                 <span>Dashboard</span>
                             </button>
-                            <button onclick="switchTab('tasks')" id="nav-tasks" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all text-slate-300 hover:bg-slate-700/50 hover:text-white justify-between">
+                            <button onclick="switchTab('tasks')" id="nav-tasks" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all text-slate-300 hover:bg-slate-700/50 hover:text-white justify-between">
                                 <div class="flex items-center space-x-3">
-                                    <i class="fa-solid fa-clipboard-list text-lg w-6"></i>
+                                    <i class="fa-solid fa-clipboard-list text-lg w-6 text-amber-500"></i>
                                     <span>Task Manager</span>
                                 </div>
                                 <span id="task-badge" class="bg-indigo-600 text-[10px] text-white px-2 py-0.5 rounded-full font-bold">0</span>
                             </button>
-                            <button onclick="switchTab('calendar')" id="nav-calendar" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all text-slate-300 hover:bg-slate-700/50 hover:text-white">
-                                <i class="fa-solid fa-calendar-days text-lg w-6"></i>
+                            <button onclick="switchTab('calendar')" id="nav-calendar" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all text-slate-300 hover:bg-slate-700/50 hover:text-white">
+                                <i class="fa-solid fa-calendar-days text-lg w-6 text-emerald-500"></i>
                                 <span>Calendar Hub</span>
                             </button>
-                            <button onclick="switchTab('chatbot')" id="nav-chatbot" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all text-slate-300 hover:bg-slate-700/50 hover:text-white">
-                                <i class="fa-solid fa-robot text-lg w-6 text-indigo-400"></i>
+                            <button onclick="switchTab('chatbot')" id="nav-chatbot" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all text-slate-300 hover:bg-slate-700/50 hover:text-white">
+                                <i class="fa-solid fa-robot text-lg w-6 text-indigo-400 animate-pulse"></i>
                                 <span>Scholar Buddy AI</span>
                             </button>
-                            <button onclick="switchTab('workspace')" id="nav-workspace" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all text-slate-300 hover:bg-slate-700/50 hover:text-white">
-                                <i class="fa-solid fa-folder-open text-lg w-6"></i>
+                            <button onclick="switchTab('workspace')" id="nav-workspace" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all text-slate-300 hover:bg-slate-700/50 hover:text-white">
+                                <i class="fa-solid fa-folder-open text-lg w-6 text-blue-500"></i>
                                 <span>My Workspace</span>
                             </button>
                         </nav>
@@ -784,17 +773,17 @@
                     <div class="pt-6 border-t border-slate-700 mt-6 shrink-0">
                         <div id="local-key-warning" class="hidden bg-amber-500/10 border border-amber-500/30 p-3 rounded-xl mb-3 text-center">
                             <div class="text-[10px] text-amber-400 font-bold uppercase tracking-wider mb-1">Local Key Config</div>
-                            <p class="text-[10px] text-slate-300 mb-2">Configure a free Gemini API key to enable chatbot responses.</p>
+                            <p class="text-[10px] text-slate-300 mb-2 font-sans">Configure a free Gemini API key to enable chatbot responses.</p>
                             <button onclick="openApiKeyModal()" class="w-full text-[10px] bg-amber-500 hover:bg-amber-600 text-slate-900 font-bold py-1.5 rounded-lg transition-all">
                                 Set API Key
                             </button>
                         </div>
 
                         <div class="bg-slate-900/60 p-3 rounded-xl mb-4 text-center border border-indigo-500/20">
-                            <div class="text-[11px] text-slate-400 uppercase tracking-wider font-semibold mb-1">Device Status</div>
-                            <div class="text-xs font-bold text-emerald-400 flex items-center justify-center gap-1.5">
+                            <div class="text-[11px] text-slate-400 uppercase tracking-wider font-semibold mb-1">System Status</div>
+                            <div id="device-status-badge" class="text-xs font-bold text-emerald-400 flex items-center justify-center gap-1.5">
                                 <span class="h-2 w-2 rounded-full bg-emerald-500 animate-ping"></span>
-                                Live Local Vault
+                                Local Vault Ready
                             </div>
                             <div id="midnight-countdown" class="text-[10px] text-indigo-300 mt-1 font-mono">Auto-clear in: 00:00:00</div>
                         </div>
@@ -842,25 +831,25 @@
                     <!-- Quick Links -->
                     <div class="flex items-center space-x-3">
                         <div class="hidden sm:flex items-center bg-slate-100 dark:bg-slate-700 rounded-xl p-1 gap-1">
-                            <button onclick="switchTab('workspace'); selectWorkspaceSub('notes')" class="text-xs px-3 py-1.5 rounded-lg font-medium text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-600 transition-all flex items-center gap-1">
+                            <button onclick="switchTab('workspace'); selectWorkspaceSub('notes')" class="text-xs px-3 py-1.5 rounded-lg font-semibold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-600 transition-all flex items-center gap-1">
                                 <i class="fa-solid fa-note-sticky text-amber-500"></i> Notes
                             </button>
-                            <button onclick="switchTab('workspace'); selectWorkspaceSub('docs')" class="text-xs px-3 py-1.5 rounded-lg font-medium text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-600 transition-all flex items-center gap-1">
+                            <button onclick="switchTab('workspace'); selectWorkspaceSub('docs')" class="text-xs px-3 py-1.5 rounded-lg font-semibold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-600 transition-all flex items-center gap-1">
                                 <i class="fa-solid fa-file-invoice text-blue-500"></i> Docs
                             </button>
-                            <button onclick="switchTab('workspace'); selectWorkspaceSub('slides')" class="text-xs px-3 py-1.5 rounded-lg font-medium text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-600 transition-all flex items-center gap-1">
+                            <button onclick="switchTab('workspace'); selectWorkspaceSub('slides')" class="text-xs px-3 py-1.5 rounded-lg font-semibold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-600 transition-all flex items-center gap-1">
                                 <i class="fa-solid fa-presentation-screen text-emerald-500"></i> Slides
                             </button>
                         </div>
 
-                        <button onclick="switchTab('chatbot')" class="bg-indigo-550/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all">
+                        <button onclick="switchTab('chatbot')" class="bg-indigo-550/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all">
                             <i class="fa-solid fa-hands-holding-child"></i> Scholar Buddy Chat
                         </button>
                     </div>
                 </header>
 
                 <!-- Notification banner container -->
-                <div id="notification-banner" class="hidden mx-6 mt-4 p-3 rounded-xl text-xs font-semibold flex items-center justify-between transition-all duration-300 shrink-0">
+                <div id="notification-banner" class="hidden mx-6 mt-4 p-3 rounded-xl text-xs font-semibold flex items-center justify-between transition-all duration-300 shrink-0 shrink-0">
                     <span id="notification-text">Welcome to Scholar Bud! Ready to study today?</span>
                     <button onclick="closeNotification()" class="text-slate-500 hover:text-slate-800 ml-2"><i class="fa-solid fa-xmark"></i></button>
                 </div>
@@ -890,7 +879,7 @@
                             <!-- Tasks Progress Widget -->
                             <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm flex flex-col justify-between">
                                 <div class="flex items-center justify-between mb-4">
-                                    <h4 class="font-bold text-sm text-slate-800 dark:text-white uppercase tracking-wider text-xs">Today's Study Progress</h4>
+                                    <h4 class="font-bold text-slate-800 dark:text-white uppercase tracking-wider text-xs">Today's Study Progress</h4>
                                     <span class="text-[10px] bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400 font-bold px-2.5 py-1 rounded-lg">Auto-Midnight Purge</span>
                                 </div>
                                 <div class="flex items-center space-x-5 py-2">
@@ -913,7 +902,7 @@
                             <!-- Calendar Peek Widget -->
                             <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm flex flex-col justify-between">
                                 <div class="flex items-center justify-between mb-4">
-                                    <h4 class="font-bold text-sm text-slate-800 dark:text-white uppercase tracking-wider text-xs">Upcoming Milestones</h4>
+                                    <h4 class="font-bold text-slate-800 dark:text-white uppercase tracking-wider text-xs">Upcoming Milestones</h4>
                                     <i class="fa-solid fa-calendar-check text-slate-400"></i>
                                 </div>
                                 <div id="dash-upcoming-events" class="space-y-3 py-1 flex-1 flex flex-col justify-center">
@@ -927,7 +916,7 @@
                             <!-- Library Analytics Widget -->
                             <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm flex flex-col justify-between">
                                 <div class="flex items-center justify-between mb-4">
-                                    <h4 class="font-bold text-sm text-slate-800 dark:text-white uppercase tracking-wider text-xs">Resource Library</h4>
+                                    <h4 class="font-bold text-slate-800 dark:text-white uppercase tracking-wider text-xs">Resource Library</h4>
                                     <i class="fa-solid fa-warehouse text-slate-400"></i>
                                 </div>
                                 <div class="grid grid-cols-3 gap-2 text-center py-2">
@@ -949,6 +938,22 @@
                                 </button>
                             </div>
 
+                        </div>
+
+                        <!-- Classroom Members Directory Widget -->
+                        <div id="classroom-directory-widget" class="hidden bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm space-y-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h4 class="font-black text-base text-slate-800 dark:text-white flex items-center gap-2">
+                                        <i class="fa-solid fa-users text-indigo-500"></i> Classroom Directory
+                                    </h4>
+                                    <p class="text-xs text-slate-400 font-medium font-sans">Real-time dynamic profile tracking of administrators and enrolled students.</p>
+                                </div>
+                                <span id="directory-count-badge" class="bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400 text-xs font-extrabold px-3.5 py-1 rounded-full">1 Member</span>
+                            </div>
+                            <div id="classroom-members-list" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <!-- Dynamic Classroom User Profiles -->
+                            </div>
                         </div>
 
                         <!-- YouTube Study Search Widget -->
@@ -976,11 +981,11 @@
 
                     <!-- PANEL 2: TASK MANAGER -->
                     <section id="panel-tasks" class="tab-panel space-y-6 hidden">
-                        <div class="bg-amber-50 dark:bg-amber-500/10 border border-amber-200/60 dark:border-amber-500/20 rounded-2xl p-4 flex items-start gap-3">
+                        <div class="bg-amber-50 dark:bg-amber-500/10 border border-amber-200/60 dark:border-amber-500/20 rounded-2xl p-4 flex items-start gap-3 animate-fade-in">
                             <div class="p-2 bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 rounded-lg shrink-0"><i class="fa-solid fa-clock"></i></div>
                             <div>
                                 <h4 class="font-extrabold text-sm text-amber-800 dark:text-amber-400">Midnight Auto-Reset</h4>
-                                <p class="text-xs text-amber-700/90 dark:text-amber-300 mt-1 leading-relaxed">Scholar Bud keeps your focus clean. Daily checkoff tasks will automatically wipe out exactly at midnight (00:00:00) relative to your local device clock.</p>
+                                <p class="text-xs text-amber-700/90 dark:text-amber-300 mt-1 leading-relaxed font-sans">Scholar Bud keeps your focus clean. Daily checkoff tasks will automatically wipe out exactly at midnight (00:00:00) relative to your local device clock.</p>
                             </div>
                         </div>
 
@@ -1029,10 +1034,10 @@
                                 <div class="p-4 bg-indigo-50 dark:bg-indigo-550/15 text-indigo-600 dark:text-indigo-400 rounded-xl text-2xl shrink-0"><i class="fa-solid fa-link"></i></div>
                                 <div class="space-y-1">
                                     <h3 class="font-extrabold text-base text-slate-800 dark:text-white">Academic Calendar Synchronization</h3>
-                                    <p class="text-xs text-slate-400 leading-relaxed">Simulate Google or Outlook calendar linkages. Class schedule updates added by Admin propagate to all classmates.</p>
+                                    <p class="text-xs text-slate-400 leading-relaxed font-sans">Simulate Google or Outlook calendar linkages. Class schedule updates added by Admin propagate to all classmates.</p>
                                 </div>
                             </div>
-                            <div class="flex flex-col sm:flex-row items-stretch gap-2 w-full md:w-auto shrink-0">
+                            <div class="flex flex-col sm:flex-row items-stretch gap-2 w-full md:w-auto shrink-0 animate-fade-in">
                                 <button onclick="toggleCalendarConnection()" id="btn-connect-calendar" class="admin-only-action bg-indigo-600 hover:bg-indigo-550 text-white font-bold text-xs px-5 py-3.5 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2">
                                     <i class="fa-solid fa-calendar-plus"></i> Connect Calendar
                                 </button>
@@ -1074,10 +1079,10 @@
                             <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 p-6 shadow-sm flex flex-col justify-between space-y-4">
                                 <div class="admin-only-action">
                                     <h3 class="font-extrabold text-xs uppercase tracking-widest text-slate-800 dark:text-white mb-4">Add Study Block</h3>
-                                    <div class="space-y-3">
+                                    <div class="space-y-3 font-sans">
                                         <div>
                                             <label class="text-[10px] font-bold text-slate-400 uppercase">Event Title</label>
-                                            <input type="text" id="event-title" placeholder="e.g. Chemistry Lecture Block" class="w-full text-xs bg-slate-50 dark:bg-slate-700 p-3 rounded-xl border-none focus:ring-2 focus:ring-indigo-500 mt-1 text-slate-800 dark:text-white font-medium">
+                                            <input type="text" id="event-title" placeholder="e.g. Chemistry Lecture Block" class="w-full text-xs bg-slate-50 dark:bg-slate-700 p-3 rounded-xl border-none focus:ring-2 focus:ring-indigo-500 mt-1 text-slate-800 dark:text-white font-medium animate-fade-in">
                                         </div>
                                         <div class="grid grid-cols-2 gap-2">
                                             <div>
@@ -1122,14 +1127,14 @@
                                     <span class="text-[10px] bg-indigo-50 text-indigo-600 dark:bg-indigo-550/10 dark:text-indigo-400 font-bold px-2.5 py-1 rounded-lg">Gemini 3 Flash Powered</span>
                                 </div>
 
-                                <div id="chatbot-messages-scroll" class="flex-1 overflow-y-auto p-6 space-y-4">
+                                <div id="chatbot-messages-scroll" class="flex-1 overflow-y-auto p-6 space-y-4 font-sans">
                                     <div class="flex items-start gap-3">
                                         <div class="h-8 w-8 bg-indigo-100 dark:bg-indigo-550/20 text-indigo-600 dark:text-indigo-400 rounded-lg flex items-center justify-center text-sm font-bold shrink-0"><i class="fa-solid fa-robot"></i></div>
                                         <div class="bg-slate-100 dark:bg-slate-700 p-4 rounded-2xl max-w-lg text-xs leading-relaxed text-slate-700 dark:text-slate-200 space-y-2">
                                             <p class="font-extrabold text-indigo-600 dark:text-indigo-400">Hello! I'm Scholar Buddy, your academic assistant.</p>
                                             <p>I help with coding, history, biology, equations, or general knowledge.</p>
                                             <p class="font-bold text-[10px] text-slate-400 uppercase tracking-wider pt-1 border-t border-slate-200 dark:border-slate-600">Strict Guidelines:</p>
-                                            <ul class="list-disc pl-4 space-y-1">
+                                            <ul class="list-disc pl-4 space-y-1 font-sans">
                                                 <li>I only answer questions connected to Studies, Coding, and general knowledge.</li>
                                                 <li>I cannot generate images.</li>
                                                 <li>I can populate Notes, Docs, Presentations, and search YouTube lectures automatically!</li>
@@ -1139,7 +1144,7 @@
                                 </div>
 
                                 <!-- Preview Image Bar -->
-                                <div id="chatbot-image-preview-bar" class="hidden px-6 py-2 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 flex items-center justify-between text-xs shrink-0">
+                                <div id="chatbot-image-preview-bar" class="hidden px-6 py-2 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 flex items-center justify-between text-xs shrink-0 shrink-0">
                                     <div class="flex items-center gap-2">
                                         <i class="fa-solid fa-file-image text-indigo-500 text-lg"></i>
                                         <span class="font-bold text-slate-700 dark:text-slate-200" id="chatbot-image-filename">loaded_diagram.png</span>
@@ -1147,24 +1152,24 @@
                                     <button onclick="clearUploadedImage()" class="text-rose-500 hover:underline font-bold text-xs"><i class="fa-solid fa-trash"></i> Remove</button>
                                 </div>
 
-                                <div id="chat-loading-indicator" class="hidden px-6 py-2 flex items-center gap-2 text-slate-400 dark:text-slate-500 text-xs font-semibold shrink-0">
+                                <div id="chat-loading-indicator" class="hidden px-6 py-2 flex items-center gap-2 text-slate-400 dark:text-slate-500 text-xs font-semibold shrink-0 shrink-0">
                                     <i class="fa-solid fa-spin fa-circle-notch text-indigo-500"></i>
                                     <span>Scholar Buddy is writing study response...</span>
                                 </div>
 
                                 <!-- Input Box -->
-                                <div class="p-4 border-t border-slate-200/60 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-800/50 space-y-3 shrink-0">
+                                <div class="p-4 border-t border-slate-200/60 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-800/50 space-y-3 shrink-0 shrink-0">
                                     <div class="flex flex-wrap items-center gap-1.5">
-                                        <button onclick="injectChatPrompt('Generate a summary on photosynthesis and create a document')" class="text-[10px] bg-white dark:bg-slate-700 hover:bg-indigo-550/10 text-slate-600 dark:text-slate-200 border border-slate-200 dark:border-slate-600 font-bold px-3 py-1.5 rounded-lg transition-all">
+                                        <button onclick="injectChatPrompt('Generate a summary on photosynthesis and create a document')" class="text-[10px] bg-white dark:bg-slate-700 hover:bg-indigo-550/10 text-slate-600 dark:text-slate-200 border border-slate-200 dark:border-slate-600 font-bold px-3 py-1.5 rounded-lg transition-all shadow-sm">
                                             <i class="fa-solid fa-file-invoice text-emerald-500"></i> Photosynthesis Summary Doc
                                         </button>
-                                        <button onclick="injectChatPrompt('Create Python program for Bubble Sort and save as a Note')" class="text-[10px] bg-white dark:bg-slate-700 hover:bg-indigo-550/10 text-slate-600 dark:text-slate-200 border border-slate-200 dark:border-slate-600 font-bold px-3 py-1.5 rounded-lg transition-all">
+                                        <button onclick="injectChatPrompt('Create Python program for Bubble Sort and save as a Note')" class="text-[10px] bg-white dark:bg-slate-700 hover:bg-indigo-550/10 text-slate-600 dark:text-slate-200 border border-slate-200 dark:border-slate-600 font-bold px-3 py-1.5 rounded-lg transition-all shadow-sm">
                                             <i class="fa-solid fa-code text-indigo-500"></i> Bubble Sort Python Note
                                         </button>
                                     </div>
                                     <div class="flex items-center gap-2">
                                         <input type="file" id="chatbot-file-input" accept="image/*" class="hidden" onchange="handleImageFileSelect(event)">
-                                        <button onclick="document.getElementById('chatbot-file-input').click()" class="h-12 w-12 bg-white hover:bg-slate-100 dark:bg-slate-700 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 rounded-xl flex items-center justify-center text-lg transition-all shadow-sm shrink-0" title="Upload diagram">
+                                        <button onclick="document.getElementById('chatbot-file-input').click()" class="h-12 w-12 bg-white hover:bg-slate-100 dark:bg-slate-700 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 rounded-xl flex items-center justify-center text-lg transition-all shadow-sm shrink-0 shrink-0" title="Upload diagram">
                                             <i class="fa-solid fa-image"></i>
                                         </button>
                                         <div class="relative flex-1">
@@ -1180,14 +1185,14 @@
                                 <p class="text-[10px] text-slate-400 mb-4 font-medium leading-relaxed font-sans">Scholar Buddy has system authorization to compile, append, and design resource directories.</p>
                                 
                                 <div class="flex-1 flex flex-col space-y-4 overflow-y-auto min-h-0">
-                                    <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200/50 dark:border-slate-700/50">
+                                    <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200/50 dark:border-slate-700/50 shadow-sm animate-fade-in">
                                         <div class="flex items-center justify-between text-xs font-bold mb-1">
                                             <span>Whiteboard Notes</span>
                                             <span class="text-[9px] bg-emerald-100 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-400 px-1.5 py-0.5 rounded font-mono uppercase">Sync Ready</span>
                                         </div>
                                         <p class="text-[10px] text-slate-400 leading-normal font-sans">Compiles facts, terms, or snippets directly inside Workspace notes.</p>
                                     </div>
-                                    <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200/50 dark:border-slate-700/50">
+                                    <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200/50 dark:border-slate-700/50 shadow-sm animate-fade-in">
                                         <div class="flex items-center justify-between text-xs font-bold mb-1">
                                             <span>Document Synthesis</span>
                                             <span class="text-[9px] bg-emerald-100 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-400 px-1.5 py-0.5 rounded font-mono uppercase">Sync Ready</span>
@@ -1216,8 +1221,8 @@
 
                         <!-- Sub-panel: Notes -->
                         <div id="wsub-panel-notes" class="wsub-panel space-y-6">
-                            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                                <div class="admin-only-action bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm space-y-3">
+                            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
+                                <div class="admin-only-action bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm space-y-3 font-sans">
                                     <h3 class="font-extrabold text-xs uppercase tracking-widest text-slate-800 dark:text-white">Create Revision Note</h3>
                                     <div>
                                         <input type="text" id="note-title" placeholder="e.g. Cellular Mitosis Facts" class="w-full text-xs bg-slate-50 dark:bg-slate-700 p-3 rounded-xl border-none focus:ring-2 focus:ring-indigo-500 mt-1 text-slate-800 dark:text-white font-semibold">
@@ -1238,7 +1243,7 @@
 
                         <!-- Sub-panel: Docs -->
                         <div id="wsub-panel-docs" class="wsub-panel hidden space-y-6">
-                            <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                            <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 animate-fade-in font-sans">
                                 <div class="lg:col-span-1 bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm h-96 overflow-y-auto flex flex-col justify-between">
                                     <div class="space-y-2">
                                         <h4 class="font-bold text-[10px] uppercase tracking-wider text-slate-400 mb-2">Workspace Documents</h4>
@@ -1266,7 +1271,7 @@
                                         </div>
                                         <textarea id="active-doc-content" class="admin-only-input w-full text-sm leading-relaxed text-slate-600 dark:text-slate-300 bg-transparent border-none focus:ring-0 focus:outline-none min-h-[250px] resize-y" placeholder="Type document reference, summaries, or reports..."></textarea>
                                     </div>
-                                    <div class="flex items-center justify-between border-t border-slate-100 dark:border-slate-700 pt-4 mt-4 shrink-0">
+                                    <div class="flex items-center justify-between border-t border-slate-100 dark:border-slate-700 pt-4 mt-4 shrink-0 shrink-0">
                                         <button onclick="deleteActiveDocument()" class="admin-only-action text-rose-500 hover:underline text-xs font-bold">Delete Doc</button>
                                         <button onclick="saveActiveDocument()" class="admin-only-action bg-slate-800 dark:bg-indigo-600 hover:bg-slate-700 dark:hover:bg-indigo-550 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all">
                                             Update Document
@@ -1278,7 +1283,7 @@
 
                         <!-- Sub-panel: Presentations -->
                         <div id="wsub-panel-slides" class="wsub-panel hidden space-y-6">
-                            <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                            <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 font-sans">
                                 <div class="lg:col-span-1 bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm h-96 overflow-y-auto flex flex-col justify-between font-medium">
                                     <div class="space-y-2">
                                         <h4 class="font-bold text-[10px] uppercase tracking-wider text-slate-400 mb-2">Available Slide Decks</h4>
@@ -1297,7 +1302,7 @@
                                         
                                         <div class="space-y-4 max-w-xl">
                                             <h2 id="active-slide-title" class="text-2xl md:text-3xl font-black bg-gradient-to-r from-white to-slate-200 bg-clip-text text-transparent">Slide Title</h2>
-                                            <ul id="active-slide-bullets" class="space-y-2 list-disc pl-5 text-sm md:text-base text-slate-300 font-medium">
+                                            <ul id="active-slide-bullets" class="space-y-2 list-disc pl-5 text-sm md:text-base text-slate-300 font-medium font-sans">
                                                 <li>Key presentation facts...</li>
                                             </ul>
                                         </div>
@@ -1305,13 +1310,13 @@
                                         <div class="flex items-center justify-between border-t border-white/10 pt-4 mt-6">
                                             <span class="text-xs text-indigo-300 font-medium font-mono" id="slide-deck-title">Active Deck Title</span>
                                             <div class="flex items-center gap-2">
-                                                <button onclick="prevSlide()" class="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-semibold"><i class="fa-solid fa-chevron-left"></i> Previous</button>
-                                                <button onclick="nextSlide()" class="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-semibold">Next <i class="fa-solid fa-chevron-right"></i></button>
+                                                <button onclick="prevSlide()" class="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-sm"><i class="fa-solid fa-chevron-left"></i> Previous</button>
+                                                <button onclick="nextSlide()" class="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-sm">Next <i class="fa-solid fa-chevron-right"></i></button>
                                             </div>
                                         </div>
                                     </div>
                                     
-                                    <div class="flex items-center justify-between mt-4 pt-4 border-t border-slate-100 dark:border-slate-700 shrink-0">
+                                    <div class="flex items-center justify-between mt-4 pt-4 border-t border-slate-100 dark:border-slate-700 shrink-0 shrink-0">
                                         <button onclick="deleteActivePresentation()" class="admin-only-action text-rose-500 hover:underline text-xs font-bold">Delete Slide Deck</button>
                                         <div class="flex gap-2">
                                             <button onclick="addSlideToDeck()" class="admin-only-action bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold text-xs px-4 py-2.5 rounded-xl transition-all">+ Add Slide</button>
@@ -1372,7 +1377,7 @@
             </div>
             
             <div class="space-y-3">
-                <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-sans">
                     A free Gemini API Key is required to power Scholar Buddy's AI engines. This key is saved locally or shared securely if managing an Organisation.
                 </p>
                 
@@ -1552,18 +1557,41 @@
         }
 
         function updateApiStatusIndicators() {
-            const isLocal = window.location.protocol === 'file:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-            const hasKey = !!window.appState.apiKey || !!window.appState.orgAdminKey;
-            
+            const mode = window.appState.userMode;
+            const badgeContainer = document.getElementById('device-status-badge');
+
+            if (badgeContainer) {
+                if (mode === 'individual') {
+                    badgeContainer.innerHTML = `
+                        <span class="h-2 w-2 rounded-full bg-amber-500"></span>
+                        Local Study Vault
+                    `;
+                    badgeContainer.className = "text-xs font-bold text-amber-500 flex items-center justify-center gap-1.5";
+                } else if (window.appState.firebaseReady && (mode === 'admin' || mode === 'member')) {
+                    badgeContainer.innerHTML = `
+                        <span class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        Classroom Cloud Sync Active
+                    `;
+                    badgeContainer.className = "text-xs font-bold text-emerald-400 flex items-center justify-center gap-1.5";
+                } else {
+                    badgeContainer.innerHTML = `
+                        <span class="h-2 w-2 rounded-full bg-indigo-500"></span>
+                        Interactive Sandbox
+                    `;
+                    badgeContainer.className = "text-xs font-bold text-indigo-400 flex items-center justify-center gap-1.5";
+                }
+            }
+
             const warningBadge = document.getElementById('local-key-warning');
             const statusDot = document.getElementById('api-status-dot');
+            const hasKey = !!window.appState.apiKey || !!window.appState.orgAdminKey;
 
             if (hasKey) {
                 if (statusDot) statusDot.className = "absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full border-2 border-slate-800 bg-emerald-500 animate-pulse";
                 if (warningBadge) warningBadge.classList.add('hidden');
             } else {
                 if (statusDot) statusDot.className = "absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full border-2 border-slate-800 bg-rose-500";
-                if (isLocal && warningBadge && window.appState.userMode !== 'member') {
+                if (warningBadge && window.appState.userMode !== 'member') {
                     warningBadge.classList.remove('hidden');
                 }
             }
@@ -1583,6 +1611,8 @@
                 if (lastCheckDate && lastCheckDate !== todayStr) {
                     console.log("New day detected! Purging whiteboard tasks.");
                     window.appState.tasks = [];
+                    
+                    // CRITICAL: Update tracked date IMMEDIATELY before saving
                     localStorage.setItem('scholarbud_last_date', todayStr);
                     
                     if (window.appState.userMode === 'admin') {
@@ -1691,6 +1721,9 @@
                 return;
             }
 
+            // CRITICAL Check: Avoid resetting newly created tasks on the transition boundary
+            TaskManager.checkAndClearExpiredTasks();
+
             window.appState.tasks.push({
                 id: crypto.randomUUID(),
                 text: text,
@@ -1773,8 +1806,8 @@
 
             const avatar = (sender === 'bot') ? botAvatar : userAvatar;
             const bubbleStyle = (sender === 'bot') 
-                ? "bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 p-4 rounded-2xl max-w-lg text-xs leading-relaxed"
-                : "bg-indigo-600 text-white p-4 rounded-2xl max-w-lg text-xs leading-relaxed ml-auto";
+                ? "bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 p-4 rounded-2xl max-w-lg text-xs leading-relaxed font-medium"
+                : "bg-indigo-600 text-white p-4 rounded-2xl max-w-lg text-xs leading-relaxed font-medium ml-auto";
 
             const formattedText = formatStudyMarkdown(text);
 
@@ -2040,7 +2073,7 @@
 
             q.options.forEach((opt, optIdx) => {
                 const btn = document.createElement('button');
-                btn.className = "w-full text-left text-xs p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 font-medium transition-all flex items-center justify-between";
+                btn.className = "w-full text-left text-xs p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 font-semibold transition-all flex items-center justify-between shadow-sm";
                 btn.innerHTML = `<span>${opt}</span> <i class="fa-regular fa-circle text-slate-300"></i>`;
                 btn.onclick = () => submitQuizAnswer(optIdx, btn);
                 grid.appendChild(btn);
@@ -2087,7 +2120,7 @@
                 
                 const grid = document.getElementById('quiz-options-grid');
                 grid.innerHTML = `
-                    <div class="text-center py-6 space-y-3 font-sans">
+                    <div class="text-center py-6 space-y-3 font-sans animate-fade-in">
                         <i class="fa-solid fa-trophy text-amber-500 text-5xl animate-bounce"></i>
                         <h4 class="font-extrabold text-sm text-slate-800 dark:text-white">Quiz Complete!</h4>
                         <p class="text-xs text-slate-500 dark:text-slate-400 font-medium">You scored ${score} out of ${total} points. Excellent study loop!</p>
@@ -2351,11 +2384,11 @@
             const activeBtn = document.getElementById(`wsub-${subTabId}`);
             if (activeBtn) {
                 if (subTabId === 'notes') {
-                    activeBtn.className = "wsub-item border-b-2 border-indigo-600 px-1 py-3 text-sm font-bold text-indigo-600 dark:text-indigo-400 transition-all flex items-center gap-2 whitespace-nowrap";
+                    activeBtn.className = "wsub-item border-b-2 border-indigo-600 px-1 py-3 text-sm font-bold text-indigo-600 dark:text-indigo-400 transition-all flex items-center gap-2 whitespace-nowrap font-sans";
                 } else if (subTabId === 'docs') {
-                    activeBtn.className = "wsub-item border-b-2 border-blue-600 px-1 py-3 text-sm font-bold text-blue-600 dark:text-blue-400 transition-all flex items-center gap-2 whitespace-nowrap";
+                    activeBtn.className = "wsub-item border-b-2 border-blue-600 px-1 py-3 text-sm font-bold text-blue-600 dark:text-blue-400 transition-all flex items-center gap-2 whitespace-nowrap font-sans";
                 } else if (subTabId === 'slides') {
-                    activeBtn.className = "wsub-item border-b-2 border-emerald-600 px-1 py-3 text-sm font-bold text-emerald-600 dark:text-emerald-400 transition-all flex items-center gap-2 whitespace-nowrap";
+                    activeBtn.className = "wsub-item border-b-2 border-emerald-600 px-1 py-3 text-sm font-bold text-emerald-600 dark:text-emerald-400 transition-all flex items-center gap-2 whitespace-nowrap font-sans";
                 }
             }
         }
@@ -2623,7 +2656,7 @@
 
             window.appState.isCalendarConnected = false;
             document.getElementById('btn-connect-calendar').innerHTML = '<i class="fa-solid fa-calendar-plus"></i> Connect Calendar';
-            document.getElementById('btn-connect-calendar').className = "bg-indigo-600 hover:bg-indigo-550 text-white font-bold text-xs px-5 py-3.5 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2";
+            document.getElementById('btn-connect-calendar').className = "bg-indigo-600 hover:bg-indigo-550 text-white font-bold text-xs px-5 py-3.5 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 animate-fade-in";
             window.appState.calendarEvents = [];
             document.getElementById('calendar-sync-banner').classList.add('hidden');
             
@@ -2713,13 +2746,13 @@
             container.innerHTML = '';
 
             if (window.appState.youtubeResults.length === 0) {
-                container.innerHTML = `<div class="col-span-full text-center py-6 text-slate-400 text-xs font-semibold">Search a study topic above to look up visual tutorial resources.</div>`;
+                container.innerHTML = `<div class="col-span-full text-center py-6 text-slate-400 text-xs font-semibold font-sans">Search a study topic above to look up visual tutorial resources.</div>`;
                 return;
             }
 
             window.appState.youtubeResults.forEach(item => {
                 const card = document.createElement('div');
-                card.className = "bg-slate-50 dark:bg-slate-700/60 p-4 rounded-xl border border-slate-200/50 dark:border-slate-600/50 hover:shadow-md transition-all flex flex-col justify-between";
+                card.className = "bg-slate-50 dark:bg-slate-700/60 p-4 rounded-xl border border-slate-200/50 dark:border-slate-600/50 hover:shadow-md transition-all flex flex-col justify-between animate-fade-in";
                 card.innerHTML = `
                     <div>
                         <div class="h-28 bg-slate-200 dark:bg-slate-800 rounded-lg flex items-center justify-center relative mb-3 overflow-hidden group">
@@ -2729,7 +2762,7 @@
                         <h5 class="text-xs font-extrabold text-slate-800 dark:text-slate-100 line-clamp-2">${item.title}</h5>
                         <p class="text-[10px] text-slate-400 mt-1 font-bold">${item.channel}</p>
                     </div>
-                    <div class="flex items-center justify-between text-[10px] text-slate-400 mt-3 border-t border-slate-100 dark:border-slate-700/60 pt-2">
+                    <div class="flex items-center justify-between text-[10px] text-slate-400 mt-3 border-t border-slate-100 dark:border-slate-700/60 pt-2 font-sans">
                         <span>${item.views}</span>
                         <a href="https://www.youtube.com/results?search_query=${encodeURIComponent(item.title)}" target="_blank" class="text-indigo-600 dark:text-indigo-400 hover:underline font-extrabold flex items-center gap-0.5">
                             Watch Lesson <i class="fa-solid fa-arrow-up-right-from-square text-[8px]"></i>
@@ -2758,9 +2791,59 @@
             renderDocumentsSelectors();
             renderPresentationsSelector();
             renderActiveSlide();
+            renderClassroomDirectory();
             
             updateApiStatusIndicators();
             configureUserInterfacePrivileges();
+        }
+
+        // Classroom Directory rendering loop (Real Google Account listings only)
+        function renderClassroomDirectory() {
+            const widget = document.getElementById('classroom-directory-widget');
+            const list = document.getElementById('classroom-members-list');
+            const badge = document.getElementById('directory-count-badge');
+
+            if (!widget || !list) return;
+
+            const mode = window.appState.userMode;
+            if (mode !== 'admin' && mode !== 'member') {
+                widget.classList.add('hidden');
+                return;
+            }
+
+            widget.classList.remove('hidden');
+            list.innerHTML = '';
+
+            const members = window.appState.members || [];
+            badge.innerText = `${members.length} Member${members.length !== 1 ? 's' : ''}`;
+
+            if (members.length === 0) {
+                list.innerHTML = `<div class="col-span-full text-center py-4 text-slate-400 text-xs font-medium font-sans">Initializing classroom directories...</div>`;
+                return;
+            }
+
+            members.forEach(m => {
+                const card = document.createElement('div');
+                card.className = "bg-slate-50 dark:bg-slate-700/40 p-3.5 rounded-xl border border-slate-200/50 dark:border-slate-700/50 flex items-center gap-3 animate-fade-in";
+                
+                const avatarSrc = m.photo || `https://placehold.co/100x100/6366f1/ffffff?text=${(m.name || 'S')[0]}`;
+                const roleBadge = m.role === 'admin' 
+                    ? `<span class="bg-indigo-600 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider font-sans">Teacher / Admin</span>`
+                    : `<span class="bg-slate-200 text-slate-700 dark:bg-slate-600 dark:text-slate-200 text-[8px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider font-sans">Student</span>`;
+
+                card.innerHTML = `
+                    <img class="h-10 w-10 rounded-xl object-cover border border-indigo-550/20" src="${avatarSrc}" onerror="this.src='https://placehold.co/100'" alt="${m.name}">
+                    <div class="overflow-hidden flex-1">
+                        <h5 class="text-xs font-black text-slate-800 dark:text-slate-100 truncate flex items-center gap-1">
+                            ${m.name}
+                            ${m.uid === window.appState.userId ? '<span class="text-[9px] text-indigo-500 font-bold font-sans">(You)</span>' : ''}
+                        </h5>
+                        <p class="text-[10px] text-slate-400 truncate">${m.email || 'Classroom Student'}</p>
+                        <div class="mt-1.5">${roleBadge}</div>
+                    </div>
+                `;
+                list.appendChild(card);
+            });
         }
 
         function renderTasksList() {
@@ -2771,8 +2854,8 @@
             if (window.appState.tasks.length === 0) {
                 list.innerHTML = `
                     <div class="text-center py-8 text-slate-400">
-                        <i class="fa-solid fa-square-check text-3xl mb-2 text-indigo-100 dark:text-slate-700"></i>
-                        <p class="text-xs font-semibold">Today's study plan is empty. Outline standard daily targets!</p>
+                        <i class="fa-solid fa-square-check text-3xl mb-2 text-indigo-100 dark:text-slate-700 animate-pulse"></i>
+                        <p class="text-xs font-semibold font-sans">Today's study plan is empty. Outline standard daily targets!</p>
                     </div>
                 `;
                 return;
@@ -2780,7 +2863,7 @@
 
             window.appState.tasks.forEach(task => {
                 const div = document.createElement('div');
-                div.className = `flex items-center justify-between p-3.5 rounded-xl border transition-all duration-150 ${
+                div.className = `flex items-center justify-between p-3.5 rounded-xl border transition-all duration-150 animate-fade-in ${
                     task.completed 
                     ? 'bg-slate-50 dark:bg-slate-700/35 border-slate-200/50 dark:border-slate-800' 
                     : 'bg-white dark:bg-slate-800 border-slate-200/80 dark:border-slate-700 hover:border-indigo-200 dark:hover:border-slate-600 shadow-sm'
@@ -2803,7 +2886,7 @@
                                 : '<i class="fa-regular fa-circle text-slate-300 hover:text-indigo-500"></i>'
                             }
                         </button>
-                        <span class="text-xs font-medium text-slate-700 dark:text-slate-200 select-none cursor-pointer truncate strike-through ${task.completed ? 'strike-active text-slate-400 dark:text-slate-500' : ''}">
+                        <span class="text-xs font-semibold text-slate-700 dark:text-slate-200 select-none cursor-pointer truncate strike-through ${task.completed ? 'strike-active text-slate-400 dark:text-slate-500' : ''}">
                             ${task.text}
                         </span>
                     </div>
@@ -2861,7 +2944,7 @@
 
             if (events.length === 0) {
                 const emptyMsg = `
-                    <div class="text-center py-4 text-slate-400 text-[11px]">
+                    <div class="text-center py-4 text-slate-400 text-[11px] font-sans">
                         <p class="font-bold">No academic events scheduled.</p>
                     </div>
                 `;
@@ -2872,11 +2955,11 @@
 
             events.forEach(event => {
                 const row = document.createElement('div');
-                row.className = "flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-200/40 dark:border-slate-600/30";
+                row.className = "flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-200/40 dark:border-slate-600/30 animate-fade-in";
                 row.innerHTML = `
                     <div class="overflow-hidden">
                         <h5 class="text-xs font-extrabold text-slate-800 dark:text-slate-100 truncate">${event.title}</h5>
-                        <p class="text-[9px] text-slate-400 font-bold">${event.date} • ${event.time}</p>
+                        <p class="text-[9px] text-slate-400 font-bold font-sans">${event.date} • ${event.time}</p>
                     </div>
                     <button onclick="deleteEvent('${event.id}')" class="admin-only-action text-slate-400 hover:text-rose-500 p-1 rounded"><i class="fa-solid fa-trash-can text-[10px]"></i></button>
                 `;
@@ -2885,7 +2968,7 @@
 
             const first = events[0];
             sneakPeek.innerHTML = `
-                <div class="p-3 bg-indigo-50/50 dark:bg-indigo-550/10 rounded-xl border border-indigo-200/30">
+                <div class="p-3 bg-indigo-50/50 dark:bg-indigo-550/10 rounded-xl border border-indigo-200/30 animate-fade-in">
                     <span class="text-[9px] bg-indigo-100 text-indigo-700 dark:bg-indigo-550/20 dark:text-indigo-400 px-2 py-0.5 rounded font-bold uppercase">Next Up</span>
                     <h5 class="text-xs font-black text-slate-800 dark:text-slate-100 mt-1 truncate">${first.title}</h5>
                     <p class="text-[10px] text-slate-400 font-bold mt-0.5"><i class="fa-regular fa-clock"></i> ${first.date} at ${first.time}</p>
@@ -2951,20 +3034,20 @@
             container.innerHTML = '';
 
             if (window.appState.notes.length === 0) {
-                container.innerHTML = `<div class="col-span-full text-center py-8 text-slate-400 text-xs font-semibold">Workspace notes are empty. Try creating one!</div>`;
+                container.innerHTML = `<div class="col-span-full text-center py-8 text-slate-400 text-xs font-semibold font-sans">Workspace notes are empty. Try creating one!</div>`;
                 return;
             }
 
             window.appState.notes.forEach(note => {
                 const card = document.createElement('div');
-                card.className = "bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm flex flex-col justify-between";
+                card.className = "bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm flex flex-col justify-between animate-fade-in";
                 card.innerHTML = `
                     <div>
                         <div class="flex items-center justify-between mb-2">
                             <h4 class="font-extrabold text-sm text-slate-800 dark:text-slate-100 truncate pr-2">${note.title}</h4>
                             <button onclick="deleteNote('${note.id}')" class="admin-only-action text-slate-400 hover:text-rose-500 text-xs transition-colors"><i class="fa-solid fa-trash-can"></i></button>
                         </div>
-                        <p class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-medium whitespace-pre-wrap">${note.content}</p>
+                        <p class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-medium whitespace-pre-wrap font-sans">${note.content}</p>
                     </div>
                 `;
                 container.appendChild(card);
@@ -2986,7 +3069,7 @@
                     ? "bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-bold"
                     : "text-slate-600 dark:text-slate-300 font-medium hover:bg-slate-100 dark:hover:bg-slate-700/50";
 
-                btn.className = `w-full text-left text-xs px-3 py-2.5 rounded-xl transition-all truncate flex items-center gap-1.5 ${activeStyle}`;
+                btn.className = `w-full text-left text-xs px-3 py-2.5 rounded-xl transition-all truncate flex items-center gap-1.5 animate-fade-in ${activeStyle}`;
                 btn.innerHTML = `<i class="fa-solid fa-file-invoice ${docItem.id === window.currentDocId ? 'text-indigo-500' : 'text-slate-400'}"></i> ${docItem.title}`;
                 container.appendChild(btn);
             });
@@ -3005,7 +3088,7 @@
                     ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold"
                     : "text-slate-600 dark:text-slate-300 font-medium hover:bg-slate-100 dark:hover:bg-slate-700/50";
 
-                btn.className = `w-full text-left text-xs px-3 py-2.5 rounded-xl transition-all truncate flex items-center gap-1.5 ${activeStyle}`;
+                btn.className = `w-full text-left text-xs px-3 py-2.5 rounded-xl transition-all truncate flex items-center gap-1.5 animate-fade-in ${activeStyle}`;
                 btn.innerHTML = `<i class="fa-solid fa-presentation-screen ${p.id === window.currentPresentationId ? 'text-emerald-500' : 'text-slate-400'}"></i> ${p.title}`;
                 container.appendChild(btn);
             });
