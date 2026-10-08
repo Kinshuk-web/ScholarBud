@@ -1,0 +1,13 @@
+{
+  "name": "scholarbud",
+  "version": "2.0.0",
+  "private": true,
+  "description": "ScholarBud — AI study workspace with a secure API proxy (keys stay server-side).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
