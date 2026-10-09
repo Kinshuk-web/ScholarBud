@@ -13,9 +13,6 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="icon" type="image/png" href="logo-small.png">
-    <link rel="shortcut icon" href="logo-small.png">
-    <link rel="apple-touch-icon" href="logo-small.png">
     
     <style>
         body {
@@ -128,9 +125,30 @@
                 return (window.appState && window.appState.apiKey) || ownerKey('gemini');
             }
 
-            function hasGemini() { return hasProxy() || !!localGeminiKey(); }
-            function hasSarvam() { return hasProxy() || !!sarvamKey(); }
-            function hasYouTube() { return hasProxy() || !!youtubeKey(); }
+            // A static host (GitHub Pages, Netlify, ...) has no ScholarBud
+            // server, so POSTing to '/api/...' fails with HTTP 405. Detect that
+            // once and switch to direct API mode automatically.
+            let proxyUsable = true;
+            function useProxy() { return hasProxy() && proxyUsable; }
+            function markProxyDead(status) {
+                if (proxyUsable) {
+                    proxyUsable = false;
+                    console.warn('ScholarBud: no server found at ' + proxyBase() + ' (HTTP ' + status + ') - switching to direct API mode.');
+                }
+            }
+            async function proxyFetch(path, opts) {
+                const r = await fetch(proxyBase() + path, opts);
+                let data = {}, isJson = true;
+                try { data = await r.json(); } catch (e) { isJson = false; }
+                // 405 = method not allowed; 404 with a non-JSON body = route missing.
+                // Either way, this is not our server.
+                if (r.status === 405 || (r.status === 404 && !isJson)) { markProxyDead(r.status); return null; }
+                return { ok: r.ok, status: r.status, data: data };
+            }
+
+            function hasGemini() { return useProxy() || !!localGeminiKey(); }
+            function hasSarvam() { return useProxy() || !!sarvamKey(); }
+            function hasYouTube() { return useProxy() || !!youtubeKey(); }
 
             // Model names change over time, so we try the requested model and
             // then a short list of known-good alternatives. The first that works
@@ -150,23 +168,25 @@
             }
 
             async function callGemini(model, payload) {
-                let r;
-                if (hasProxy()) {
-                    r = await fetch(proxyBase() + '/api/gemini', {
+                if (useProxy()) {
+                    const pr = await proxyFetch('/api/gemini', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ model: model, payload: payload })
                     });
-                } else {
-                    const key = localGeminiKey();
-                    if (!key) throw new Error('NO_GEMINI_KEY');
-                    r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/'
-                        + encodeURIComponent(model) + ':generateContent', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-                        body: JSON.stringify(payload)
-                    });
+                    if (pr) return pr;
+                    // proxy unreachable -> fall through to direct mode
                 }
+                const key = localGeminiKey();
+                if (!key) throw new Error('NO_GEMINI_KEY');
+                // Direct browser call. The key goes in the query string, which is
+                // the most CORS-friendly form for static-site deployments.
+                const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/'
+                    + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
                 let data = {};
                 try { data = await r.json(); } catch (e) { data = {}; }
                 return { ok: r.ok, status: r.status, data: data };
@@ -204,14 +224,16 @@
             async function sarvamChat(messages, opts) {
                 opts = opts || {};
                 const model = opts.model || DEFAULT_SARVAM_CHAT;
-                if (hasProxy()) {
-                    const r = await fetch(proxyBase() + '/api/sarvam/chat', {
+                if (useProxy()) {
+                    const pr = await proxyFetch('/api/sarvam/chat', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ messages: messages, model: model })
                     });
-                    if (!r.ok) throw new Error('ScholarBud server error ' + r.status);
-                    return (await r.json()).content;
+                    if (pr) {
+                        if (!pr.ok) throw new Error((pr.data && pr.data.error) || ('ScholarBud server error ' + pr.status));
+                        return pr.data.content;
+                    }
                 }
                 if (!sarvamKey()) throw new Error('NO_SARVAM_KEY');
                 const r = await fetch('https://api.sarvam.ai/v1/chat/completions', {
@@ -228,14 +250,16 @@
                 languageCode = languageCode || 'en-IN';
                 speaker = speaker || CFG.sarvamSpeaker || 'shubh';
                 const body = { text: String(text).slice(0, 2500), language_code: languageCode, speaker: speaker, model: 'bulbul:v3' };
-                if (hasProxy()) {
-                    const r = await fetch(proxyBase() + '/api/sarvam/tts', {
+                if (useProxy()) {
+                    const pr = await proxyFetch('/api/sarvam/tts', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(body)
                     });
-                    if (!r.ok) throw new Error('ScholarBud server error ' + r.status);
-                    return (await r.json()).audioBase64;
+                    if (pr) {
+                        if (!pr.ok) throw new Error((pr.data && pr.data.error) || ('ScholarBud server error ' + pr.status));
+                        return pr.data.audioBase64;
+                    }
                 }
                 if (!sarvamKey()) throw new Error('NO_SARVAM_KEY');
                 const r = await fetch('https://api.sarvam.ai/text-to-speech', {
@@ -249,10 +273,12 @@
             }
 
             async function youtubeSearch(query) {
-                if (hasProxy()) {
-                    const r = await fetch(proxyBase() + '/api/youtube?q=' + encodeURIComponent(query));
-                    if (!r.ok) throw new Error('ScholarBud server error ' + r.status);
-                    return (await r.json()).results || [];
+                if (useProxy()) {
+                    const pr = await proxyFetch('/api/youtube?q=' + encodeURIComponent(query));
+                    if (pr) {
+                        if (!pr.ok) throw new Error((pr.data && pr.data.error) || ('ScholarBud server error ' + pr.status));
+                        return pr.data.results || [];
+                    }
                 }
                 if (!youtubeKey()) throw new Error('NO_YOUTUBE_KEY');
                 const url = 'https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=6&q='
@@ -2131,7 +2157,9 @@
                 console.error("AI Generation Error: ", e);
                 const detail = (e && e.message) ? e.message : String(e);
                 let hint = "Check your API key or the ScholarBud server in Settings.";
-                if (/NO_GEMINI_KEY|NO_SARVAM_KEY/.test(detail)) {
+                if (/405|Method Not Allowed/i.test(detail)) {
+                    hint = "HTTP 405 means your host is static (e.g. GitHub Pages) and cannot run the ScholarBud server. In config.js set proxyBaseUrl to your deployed server URL, or set it to '' and paste a direct key.";
+                } else if (/NO_GEMINI_KEY|NO_SARVAM_KEY/.test(detail)) {
                     hint = "No AI key is configured. Add one in Settings, or connect the ScholarBud server.";
                 } else if (/unavailable|not found|no usable/i.test(detail)) {
                     hint = "The selected model isn't available for this key — pick a different engine in the chat header.";
