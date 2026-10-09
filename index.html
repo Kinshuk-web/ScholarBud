@@ -2157,7 +2157,9 @@
                 console.error("AI Generation Error: ", e);
                 const detail = (e && e.message) ? e.message : String(e);
                 let hint = "Check your API key or the ScholarBud server in Settings.";
-                if (/405|Method Not Allowed/i.test(detail)) {
+                if (/referer|referrer/i.test(detail) && /blocked/i.test(detail)) {
+                    hint = "Your Google API key has a website restriction that does not include this site. In Google Cloud Console -> APIs & Services -> Credentials -> your key -> Application restrictions -> Websites, add:  https://" + window.location.hostname + "/*  (then Save and wait ~2 minutes).";
+                } else if (/405|Method Not Allowed/i.test(detail)) {
                     hint = "HTTP 405 means your host is static (e.g. GitHub Pages) and cannot run the ScholarBud server. In config.js set proxyBaseUrl to your deployed server URL, or set it to '' and paste a direct key.";
                 } else if (/NO_GEMINI_KEY|NO_SARVAM_KEY/.test(detail)) {
                     hint = "No AI key is configured. Add one in Settings, or connect the ScholarBud server.";
