@@ -17,7 +17,7 @@ window.SCHOLARBUD_CONFIG = {
 
     // '' for direct mode, or your server URL e.g.
     // 'https://scholarbud.onrender.com'
-    proxyBaseUrl: '',
+    proxyBaseUrl: 'https://scholarbud.onrender.com',
 
     // ==========================================================
     //  >>>  PASTE YOUR API KEY(S) HERE  <<<
@@ -25,8 +25,8 @@ window.SCHOLARBUD_CONFIG = {
     // ==========================================================
     ownerApi: {
         geminiApiKey: '',     // Gemini key  (chatbot, quiz, planner)
-        sarvamApiKey: '',     // Sarvam key  (voice, multilingual chat)
-        youtubeApiKey: ''     // YouTube Data API v3 key (video search)
+        sarvamApiKey: 'sk_mf32x49g_oSndk437IjpFSyK5uVbCMwsY',     // Sarvam key  (voice, multilingual chat)
+        youtubeApiKey: 'AIzaSyCdAhXR_g0XT17aiWzHA3URoaCGi47pN4c'     // YouTube Data API v3 key (video search)
     },
 
     // Leave the rest as it is.
