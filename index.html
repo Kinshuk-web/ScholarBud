@@ -1479,11 +1479,11 @@
                     </section>
 
                     <!-- PANEL 4: CHATBOT -->
-                    <section id="panel-chatbot" class="tab-panel h-[calc(100vh-140px)] flex flex-col justify-between hidden">
-                        <div class="flex-1 flex flex-col md:flex-row gap-6 overflow-hidden h-full">
+                    <section id="panel-chatbot" class="tab-panel h-[calc(100vh-190px)] md:h-[calc(100vh-140px)] min-h-[430px] flex flex-col justify-between hidden">
+                        <div class="flex-1 flex flex-col md:flex-row gap-6 overflow-hidden h-full min-h-0">
                             
                             <!-- Messages -->
-                            <div class="flex-1 flex flex-col bg-white dark:bg-slate-800 rounded-3xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm overflow-hidden h-full">
+                            <div class="flex-1 flex flex-col bg-white dark:bg-slate-800 rounded-3xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm overflow-hidden h-full min-h-0">
                                 <div class="p-4 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200/60 dark:border-slate-700/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 font-sans">
                                     <div class="flex items-center space-x-3">
                                         <div class="h-10 w-10 bg-indigo-100 dark:bg-indigo-550/20 text-indigo-600 dark:text-indigo-400 rounded-xl flex items-center justify-center text-lg font-bold shrink-0"><i class="fa-solid fa-robot"></i></div>
@@ -1500,7 +1500,7 @@
                                     </div>
                                 </div>
 
-                                <div id="chatbot-messages-scroll" class="flex-1 overflow-y-auto p-6 space-y-4 font-sans">
+                                <div id="chatbot-messages-scroll" class="flex-1 min-h-0 overflow-y-auto p-6 space-y-4 font-sans">
                                     <div class="flex items-start gap-3">
                                         <div class="h-8 w-8 bg-indigo-100 dark:bg-indigo-550/20 text-indigo-600 dark:text-indigo-400 rounded-lg flex items-center justify-center text-sm font-bold shrink-0"><i class="fa-solid fa-robot"></i></div>
                                         <div class="bg-slate-100 dark:bg-slate-700 p-4 rounded-2xl max-w-lg text-xs leading-relaxed text-slate-700 dark:text-slate-200 space-y-2 font-medium">
@@ -1553,7 +1553,7 @@
                                 </div>
                             </div>
                             
-                            <div class="w-full md:w-80 bg-slate-50 dark:bg-slate-800/45 rounded-3xl p-5 border border-slate-200/60 dark:border-slate-700/50 flex flex-col h-full overflow-hidden shrink-0 font-sans">
+                            <div class="hidden md:flex md:w-80 bg-slate-50 dark:bg-slate-800/45 rounded-3xl p-5 border border-slate-200/60 dark:border-slate-700/50 flex-col h-full overflow-hidden shrink-0 font-sans">
                                 <h4 class="font-extrabold text-xs uppercase tracking-wider text-slate-800 dark:text-white mb-3">AI Sandbox Tools</h4>
                                 <p class="text-[10px] text-slate-400 mb-4 font-medium leading-relaxed font-sans">Scholar Buddy has system authorization to compile, append, and design resource directories.</p>
                                 
@@ -1879,6 +1879,9 @@
             document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
             const panel = document.getElementById(`panel-${tabId}`);
             if (panel) panel.classList.remove('hidden');
+
+            // Make sure the engine dropdown is populated whenever the chat opens.
+            if (tabId === 'chatbot' && window.populateChatModelSelect) populateChatModelSelect();
 
             document.querySelectorAll('.nav-item').forEach(btn => {
                 btn.className = "nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all text-slate-300 hover:bg-slate-700/50 hover:text-white";
@@ -2269,6 +2272,11 @@
                     if (txt) return txt;
                 } catch (e) {
                     console.warn('Sarvam chat unavailable, falling back to Gemini:', e);
+                    const why = (e && e.message) ? e.message : String(e);
+                    let tip = 'Check your Sarvam key on the server.';
+                    if (/NO_SARVAM_KEY|missing SARVAM_API_KEY/i.test(why)) tip = 'Add SARVAM_API_KEY to your server environment variables and redeploy.';
+                    else if (/invalid|403|auth/i.test(why)) tip = 'The Sarvam API key was rejected - re-check it.';
+                    NotificationManager.show('Sarvam engine failed (' + why + '). ' + tip + ' Answered with Gemini instead.', 'error');
                 }
             }
 
@@ -3122,10 +3130,22 @@
                 console.warn('YouTube search unavailable:', e);
                 window.appState.youtubeResults = [];
                 const watchAll = 'https://www.youtube.com/results?search_query=' + encodeURIComponent(query);
+                const why = (e && e.message) ? e.message : String(e);
+                let tip = 'Check that YOUTUBE_API_KEY is set on your server.';
+                if (/not been used|has not been used|is disabled|not enabled/i.test(why)) {
+                    tip = 'Enable "YouTube Data API v3" for your project in Google Cloud Console, then wait a few minutes.';
+                } else if (/blocked|PERMISSION_DENIED/i.test(why)) {
+                    tip = 'Your API key restrictions must include "YouTube Data API v3".';
+                } else if (/missing YOUTUBE_API_KEY|NO_YOUTUBE_KEY/i.test(why)) {
+                    tip = 'Add YOUTUBE_API_KEY to your server environment variables and redeploy.';
+                } else if (/quota|exceeded/i.test(why)) {
+                    tip = 'Daily YouTube quota is used up - try again tomorrow or use a different key.';
+                }
                 if (container) {
                     container.innerHTML = `<div class="col-span-full text-center py-6 text-slate-400 text-xs font-semibold">
-                        Live results need the ScholarBud server (or a YouTube Data API key).
-                        <a href="${watchAll}" target="_blank" class="text-red-500 font-bold underline ml-1">Open &quot;${window.escapeHtml(query)}&quot; on YouTube</a>
+                        Live YouTube results unavailable: <span class="text-rose-500">${window.escapeHtml(why)}</span><br>
+                        <span class="text-[10px] block mt-1">${tip}</span>
+                        <a href="${watchAll}" target="_blank" class="text-red-500 font-bold underline mt-1 inline-block">Open &quot;${window.escapeHtml(query)}&quot; on YouTube</a>
                     </div>`;
                 }
             }
