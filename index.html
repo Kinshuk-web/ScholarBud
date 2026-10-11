@@ -167,6 +167,17 @@
                     || m.indexOf('unsupported model') !== -1;
             }
 
+            // Temporary capacity problems ("high demand", 503, overloaded...).
+            // These are worth trying again, or trying on a different model.
+            function overloaded(status, msg) {
+                if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) return true;
+                const m = String(msg || '').toLowerCase();
+                return m.indexOf('high demand') !== -1 || m.indexOf('overloaded') !== -1
+                    || m.indexOf('temporarily') !== -1 || m.indexOf('try again') !== -1
+                    || m.indexOf('unavailable') !== -1 || m.indexOf('resource_exhausted') !== -1
+                    || m.indexOf('capacity') !== -1;
+            }
+
             async function callGemini(model, payload) {
                 if (useProxy()) {
                     const pr = await proxyFetch('/api/gemini', {
@@ -196,29 +207,39 @@
                 opts = opts || {};
                 const requested = opts.model || geminiModel();
                 const chain = [requested].concat(GEMINI_FALLBACKS.filter(function (m) { return m !== requested; }));
-                let lastErr = null;
 
-                for (let i = 0; i < chain.length; i++) {
-                    const model = chain[i];
-                    let res;
-                    try {
-                        res = await callGemini(model, payload);
-                    } catch (e) {
-                        // Network/other hard failure: stop trying models.
-                        if (e && e.message === 'NO_GEMINI_KEY') throw e;
-                        throw e;
-                    }
-                    if (res.ok) { resolvedModel[requested] = model; return res.data; }
+                // One pass over the model list.
+                async function attemptAll() {
+                    let lastErr = null, wasOverloaded = false;
+                    for (let i = 0; i < chain.length; i++) {
+                        const model = chain[i];
+                        const res = await callGemini(model, payload); // throws only on NO_GEMINI_KEY / network
+                        if (res.ok) { resolvedModel[requested] = model; return { data: res.data }; }
 
-                    const msg = (res.data && res.data.error && res.data.error.message) || ('HTTP ' + res.status);
-                    if (modelMissing(res.status, msg)) {
-                        lastErr = new Error('Model "' + model + '" is unavailable for this key (' + res.status + ').');
-                        continue;
+                        const msg = (res.data && res.data.error && res.data.error.message) || ('HTTP ' + res.status);
+                        if (modelMissing(res.status, msg)) {
+                            lastErr = new Error('Model "' + model + '" is unavailable for this key (' + res.status + ').');
+                            continue;
+                        }
+                        if (overloaded(res.status, msg)) {
+                            // Busy model: try the next one instead of failing.
+                            lastErr = new Error(msg); wasOverloaded = true; continue;
+                        }
+                        throw new Error(msg); // real error (bad key etc.) — surface it
                     }
-                    // Real API error (bad key, quota, etc.) — surface it.
-                    throw new Error(msg);
+                    return { error: lastErr, overloaded: wasOverloaded };
                 }
-                throw lastErr || new Error('No usable Gemini model was found.');
+
+                let out = await attemptAll();
+                if (out.data) return out.data;
+
+                if (out.overloaded) {
+                    // Demand spikes are short — pause briefly and try the whole list once more.
+                    await new Promise(function (r) { setTimeout(r, 1500); });
+                    out = await attemptAll();
+                    if (out.data) return out.data;
+                }
+                throw out.error || new Error('No usable Gemini model was found.');
             }
 
             async function sarvamChat(messages, opts) {
@@ -2157,7 +2178,9 @@
                 console.error("AI Generation Error: ", e);
                 const detail = (e && e.message) ? e.message : String(e);
                 let hint = "Check your API key or the ScholarBud server in Settings.";
-                if (/referer|referrer/i.test(detail) && /blocked/i.test(detail)) {
+                if (/high demand|overloaded|temporarily|try again later|resource_exhausted|\b503\b/i.test(detail)) {
+                    hint = "The model is briefly overloaded (temporary, not your fault). Wait a few seconds and send again, or switch engine in the chat header.";
+                } else if (/referer|referrer/i.test(detail) && /blocked/i.test(detail)) {
                     hint = "Your Google API key has a website restriction that does not include this site. In Google Cloud Console -> APIs & Services -> Credentials -> your key -> Application restrictions -> Websites, add:  https://" + window.location.hostname + "/*  (then Save and wait ~2 minutes).";
                 } else if (/405|Method Not Allowed/i.test(detail)) {
                     hint = "HTTP 405 means your host is static (e.g. GitHub Pages) and cannot run the ScholarBud server. In config.js set proxyBaseUrl to your deployed server URL, or set it to '' and paste a direct key.";
