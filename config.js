@@ -35,12 +35,12 @@ window.SCHOLARBUD_CONFIG = {
     sarvamSpeaker: 'shubh',
 
     firebase: {
-        apiKey: "",
-        authDomain: "",
-        projectId: "",
-        storageBucket: "",
-        messagingSenderId: "",
-        appId: ""
+        apiKey: "AIzaSyATrTWM0ykEx2NbntlD-ylaXwBKw8NgC3g",
+        authDomain: "scholarbud-258e5.firebaseapp.com",
+        projectId: "scholarbud-258e5",
+        storageBucket: "scholarbud-258e5.firebasestorage.app",
+        messagingSenderId: "735904448433",
+        appId: "1:735904448433:web:92fc544d766d2643060790"
     },
 
     allowedGoogleDomains: []
