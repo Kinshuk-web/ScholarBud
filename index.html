@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scholar Bud - Your Ultimate AI Study Workspace</title>
-    <link rel="icon" type="image/png" href="logo-small.png">
+	<link rel="icon" type="image/png" href="logo-small.png">
 	<link rel="shortcut icon" href="logo-small.png">
 	<link rel="apple-touch-icon" href="logo-small.png">
+    <title>Scholar Bud - Your Ultimate AI Study Workspace</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -141,6 +141,8 @@
         html.dark #mobile-pill { background: rgba(15,23,37,.72); box-shadow: 0 10px 34px rgba(0,0,0,.5); }
         @media (max-width: 767px) { #mobile-pill { display: flex; } }
         #mobile-pill.pill-shrink { transform: translateX(-50%) scale(.84); opacity: .6; }
+        /* hide the pill while the mobile sidebar drawer is open so it can't cover it */
+        body.sb-drawer-open #mobile-pill { display: none !important; }
 
         .pill-btn {
             display: flex; align-items: center; gap: .35rem;
@@ -544,15 +546,18 @@
                 window.appState.firebaseReady = true;
 
                 onAuthStateChanged(window.auth, (user) => {
+                    window.authResolved = true;
                     if (user) {
                         window.appState.userId = user.uid;
                         window.appState.userEmail = user.email;
                         window.appState.userDisplayName = user.displayName;
                         window.appState.userPhotoURL = user.photoURL;
-                        
+
                         handleAuthenticatedTransition();
                     } else {
                         window.appState.userId = null;
+                        // No signed-in user: now it is safe to decide the mode.
+                        if (!window.pendingAction) { try { evaluateModeSelection(); } catch (e) {} }
                     }
                 });
                 
@@ -562,11 +567,15 @@
             } catch (error) {
                 console.warn("Could not load Firebase configuration:", error);
                 window.appState.firebaseReady = false;
+                window.authResolved = true;   // no Google sign-in possible here
                 return false;
             }
         };
 
-        // Initialize Firebase on load with your credentials automatically
+        // Initialize Firebase on load with your credentials automatically.
+        // authResolved stays false until Firebase answers, so we never clear a
+        // saved organisation workspace just because auth is still loading.
+        window.authResolved = false;
         window.initFirebase(yourFirebaseConfig);
 
         // Real Google Sign-in trigger with error handling for live custom domains
@@ -632,6 +641,15 @@
             const mode = window.appState.userMode;
             const isOrgMode = (mode === 'admin' || mode === 'member');
             const hasUser = !!window.appState.userId;
+            const splash = document.getElementById('boot-splash');
+
+            // Firebase has not answered yet. Do NOT clear anything - just wait,
+            // otherwise a saved organisation workspace would be wiped on every reload.
+            if (isOrgMode && !hasUser && !window.authResolved) {
+                if (splash) splash.classList.remove('hidden');
+                return;
+            }
+            if (splash) splash.classList.add('hidden');
 
             if (mode === 'individual') {
                 configureUserInterfacePrivileges();
@@ -650,8 +668,9 @@
                 document.getElementById('org-details-form').classList.add('hidden');
                 document.getElementById('org-join-form').classList.add('hidden');
                 document.getElementById('app-main-layout').classList.add('hidden');
-                
-                if (isOrgMode && !hasUser) {
+
+                // Only now (auth finished, still no user) is it safe to forget the org.
+                if (isOrgMode && !hasUser && window.authResolved) {
                     localStorage.removeItem('scholarbud_user_mode');
                     localStorage.removeItem('scholarbud_org_code');
                     localStorage.removeItem('scholarbud_org_name');
@@ -735,6 +754,7 @@
                 window.appState.userMode = 'individual';
                 window.appState.userDisplayName = 'Individual Scholar';
                 localStorage.setItem('scholarbud_user_mode', 'individual');
+                localStorage.setItem('scholarbud_last_workspace', 'individual');
                 evaluateModeSelection();
                 NotificationManager.show("Successfully running in Individual Sandbox Mode!", "success");
             } else {
@@ -839,6 +859,7 @@
             window.appState.members = [adminProfile];
 
             window.OrgManager.add({ code: generatedCode, name: orgNameInput, role: 'admin' });
+            localStorage.setItem('scholarbud_last_workspace', generatedCode);
             await saveAdminOrganisationData();
             evaluateModeSelection();
             NotificationManager.show(`Whiteboard online! Code: ${generatedCode}`, "success");
@@ -905,6 +926,7 @@
 
             if (successfulJoin) {
                 window.OrgManager.add({ code: window.appState.orgCode, name: window.appState.orgName, role: 'member', memberName: nickInput });
+                localStorage.setItem('scholarbud_last_workspace', window.appState.orgCode);
                 evaluateModeSelection();
                 NotificationManager.show(`Successfully joined classroom: "${window.appState.orgName}"`, "success");
             } else {
@@ -912,7 +934,33 @@
             }
         }
 
-        // SWITCH WORKSPACE / mode / accounts
+        // ---- Switch workspace WITHOUT signing out or losing data ----
+        async function switchToWorkspace(id) {
+            if (id === 'individual') {
+                if (window.unsubscribeOrgSync) { window.unsubscribeOrgSync(); window.unsubscribeOrgSync = null; }
+                window.appState.userMode = 'individual';
+                window.appState.orgCode = '';
+                window.appState.orgName = '';
+                window.appState.memberName = '';
+                window.appState.members = [];
+                window.appState.userDisplayName = window.appState.userDisplayName || 'Individual Scholar';
+                localStorage.setItem('scholarbud_user_mode', 'individual');
+                localStorage.removeItem('scholarbud_org_code');
+                localStorage.removeItem('scholarbud_org_name');
+                localStorage.removeItem('scholarbud_member_name');
+                window.lastWorkspace = 'individual';
+                localStorage.setItem('scholarbud_last_workspace', 'individual');
+                evaluateModeSelection();
+                if (window.OrgManager) OrgManager.render();
+                NotificationManager.show('Switched to your Individual workspace (device data kept).', 'success');
+                return;
+            }
+            window.lastWorkspace = id;
+            localStorage.setItem('scholarbud_last_workspace', id);
+            window.OrgManager.activate(id);
+        }
+
+        // Full reset: signs out and forgets every workspace on this device.
         async function switchWorkspaceMode() {
             window.customConfirm(
                 "Switch Workspace Mode", 
@@ -923,8 +971,10 @@
                     localStorage.removeItem('scholarbud_org_name');
                     localStorage.removeItem('scholarbud_member_name');
                     localStorage.removeItem('scholarbud_orgs');
+                    localStorage.removeItem('scholarbud_last_workspace');
 
                     window.appState.orgs = [];
+                    window.lastWorkspace = '';
                     window.appState.userMode = '';
                     window.appState.orgCode = '';
                     window.appState.orgName = '';
@@ -1032,6 +1082,16 @@
             }
         }
     </script>
+
+    <!-- Boot splash: shown only while Firebase is still restoring the session -->
+    <div id="boot-splash" class="hidden fixed inset-0 z-30 flex items-center justify-center" style="background-color: var(--sb-bg);">
+        <div class="text-center">
+            <div class="h-11 w-11 mx-auto mb-3 rounded-2xl bg-gradient-to-tr from-violet-600 to-indigo-500 flex items-center justify-center text-white">
+                <i class="fa-solid fa-graduation-cap"></i>
+            </div>
+            <p class="text-xs font-bold" style="color: var(--sb-muted);">Restoring your workspace...</p>
+        </div>
+    </div>
 
     <!-- Welcome / Setup Wizard Modal Card -->
     <div id="welcome-auth-card" class="fixed inset-0 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 z-40 flex items-center justify-center p-4 overflow-y-auto">
@@ -1275,7 +1335,7 @@
                         <!-- Organisations (max 3) -->
                         <div class="sb-hide mt-6">
                             <div class="flex items-center justify-between mb-2 px-1">
-                                <span class="text-[10px] font-bold uppercase tracking-wider sb-muted">My Organisations</span>
+                                <span class="text-[10px] font-bold uppercase tracking-wider sb-muted">Workspaces</span>
                                 <button onclick="openAddOrgFlow()" title="Add organisation" class="h-5 w-5 rounded-md flex items-center justify-center text-indigo-500 hover:bg-indigo-500/10 transition-colors">
                                     <i class="fa-solid fa-plus text-[10px]"></i>
                                 </button>
@@ -1305,9 +1365,6 @@
                         
                         <!-- Actions & Swappers -->
                         <div class="space-y-2">
-                            <button onclick="switchWorkspaceMode()" class="w-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/25 py-2.5 rounded-xl hover:bg-indigo-500 hover:text-white transition-all text-xs font-bold flex items-center justify-center gap-2">
-                                <i class="fa-solid fa-arrows-spin"></i> Switch Workspace
-                            </button>
                             <button id="install-app-btn" class="w-full mb-2 bg-indigo-500/10 text-indigo-500 border border-indigo-500/25 py-2.5 rounded-xl hover:bg-indigo-500 hover:text-white transition-all text-xs font-bold flex items-center justify-center gap-2">
                                 <i class="fa-solid fa-download"></i> Install app
                             </button>
@@ -1322,7 +1379,7 @@
                                     <span id="api-status-dot" class="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full border-2 border-white dark:border-slate-900 bg-rose-500"></span>
                                 </button>
                                 <button onclick="switchWorkspaceMode()" class="h-9 px-3 bg-rose-500/10 text-rose-500 border border-rose-500/25 rounded-xl hover:bg-rose-500 hover:text-white transition-all text-xs font-bold flex-1" title="Sign Out">
-                                    <i class="fa-solid fa-arrow-right-from-bracket mr-1"></i> Logout
+                                    <i class="fa-solid fa-arrow-right-from-bracket mr-1"></i> Sign out
                                 </button>
                             </div>
                         </div>
@@ -1981,7 +2038,8 @@
         function toggleMobileSidebar() {
             const sidebar = document.getElementById('sidebar');
             const overlay = document.getElementById('sidebar-overlay');
-            if (sidebar.classList.contains('-left-64')) {
+            const opening = sidebar.classList.contains('-left-64');
+            if (opening) {
                 sidebar.classList.remove('-left-64');
                 sidebar.classList.add('left-0');
                 overlay.classList.remove('hidden');
@@ -1990,6 +2048,8 @@
                 sidebar.classList.add('-left-64');
                 overlay.classList.add('hidden');
             }
+            // The floating pill must never sit on top of the open drawer.
+            document.body.classList.toggle('sb-drawer-open', opening);
         }
 
         function switchTab(tabId) {
@@ -3872,14 +3932,36 @@
                 if (!host) return;
                 var l = this.list();
                 host.innerHTML = '';
+
+                // ---- Individual workspace (always available) ----
+                var isInd = (window.appState.userMode !== 'admin' && window.appState.userMode !== 'member');
+                var ind = document.createElement('div');
+                ind.className = 'flex items-center gap-2 px-2 py-2 rounded-xl cursor-pointer transition-colors '
+                    + (isInd ? 'bg-indigo-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5');
+                ind.innerHTML =
+                    '<span class="h-6 w-6 rounded-lg flex items-center justify-center text-[10px] font-bold shrink-0 bg-emerald-500/15 text-emerald-500"><i class="fa-solid fa-user"></i></span>' +
+                    '<div class="min-w-0 flex-1">' +
+                        '<p class="text-[11px] font-bold truncate">Individual</p>' +
+                        '<p class="text-[9px] sb-muted">Local, on this device</p>' +
+                    '</div>' +
+                    (isInd ? '<span class="text-[9px] font-bold text-indigo-500 shrink-0">Active</span>' : '');
+                ind.addEventListener('click', function () { if (!isInd) switchToWorkspace('individual'); });
+                host.appendChild(ind);
+
                 if (!l.length) {
-                    host.innerHTML = '<p class="text-[10px] sb-muted px-1 leading-relaxed">No organisations yet. Tap + to create or join one.</p>';
+                    var hint = document.createElement('p');
+                    hint.className = 'text-[10px] sb-muted px-1 pt-1 leading-relaxed';
+                    hint.textContent = 'No organisations yet. Tap + to create or join one.';
+                    host.appendChild(hint);
                     return;
                 }
+
                 l.forEach(function (o) {
-                    var active = (o.code === window.appState.orgCode);
+                    var active = (o.code === window.appState.orgCode &&
+                                  (window.appState.userMode === 'admin' || window.appState.userMode === 'member'));
                     var row = document.createElement('div');
-                    row.className = 'flex items-center gap-2 px-2 py-2 rounded-xl cursor-pointer transition-colors ' + (active ? 'bg-indigo-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5');
+                    row.className = 'flex items-center gap-2 px-2 py-2 rounded-xl cursor-pointer transition-colors '
+                        + (active ? 'bg-indigo-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5');
                     row.innerHTML =
                         '<span class="h-6 w-6 rounded-lg flex items-center justify-center text-[10px] font-bold shrink-0 ' +
                             (o.role === 'admin' ? 'bg-indigo-500/15 text-indigo-500' : 'bg-amber-500/15 text-amber-500') + '">' +
@@ -3888,7 +3970,9 @@
                             '<p class="text-[11px] font-bold truncate">' + window.escapeHtml(o.name) + '</p>' +
                             '<p class="text-[9px] sb-muted font-mono">' + window.escapeHtml(o.code) + '</p>' +
                         '</div>' +
-                        '<button data-del="' + o.code + '" title="Leave / delete" class="h-6 w-6 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors shrink-0"><i class="fa-solid fa-xmark text-[10px]"></i></button>';
+                        (active
+                            ? '<span class="text-[9px] font-bold text-indigo-500 shrink-0">Active</span>'
+                            : '<button data-del="' + o.code + '" title="Leave / delete" class="h-6 w-6 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors shrink-0"><i class="fa-solid fa-xmark text-[10px]"></i></button>');
                     row.addEventListener('click', function (e) {
                         var del = e.target.closest('[data-del]');
                         if (del) {
@@ -3898,7 +3982,7 @@
                             });
                             return;
                         }
-                        if (!active) window.OrgManager.activate(o.code);
+                        if (!active) switchToWorkspace(o.code);
                     });
                     host.appendChild(row);
                 });
