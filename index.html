@@ -3,9 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<link rel="icon" type="image/png" href="logo-small.png">
-	<link rel="shortcut icon" href="logo-small.png">
-	<link rel="apple-touch-icon" href="logo-small.png">
     <title>Scholar Bud - Your Ultimate AI Study Workspace</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -102,6 +99,7 @@
 
         /* ============ Sidebar ============ */
         #sidebar {
+            z-index: 45 !important;
             background-color: var(--sb-side) !important;
             color: var(--sb-side-text);
             border-color: var(--sb-line) !important;
@@ -129,7 +127,7 @@
         #mobile-pill {
             display: none;
             position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
-            z-index: 35; align-items: center; gap: 4px; padding: 6px;
+            z-index: 25; align-items: center; gap: 4px; padding: 6px;
             border-radius: 9999px;
             background: rgba(255,255,255,.72);
             border: 1px solid var(--sb-line);
@@ -1276,7 +1274,7 @@
             
             <!-- Sidebar Navigation -->
             <aside id="sidebar" class="w-64 bg-slate-800 text-slate-100 flex flex-col justify-between border-r border-slate-700 transition-all duration-300 md:relative absolute z-30 h-full -left-64 md:left-0 shrink-0">
-                <div class="p-5 flex flex-col h-full justify-between overflow-y-auto font-medium">
+                <div class="p-5 pb-28 md:pb-5 flex flex-col h-full justify-between overflow-y-auto font-medium">
                     <div>
                         <!-- Logo / Brand -->
                         <div class="sb-brand flex items-center space-x-3 mb-6">
