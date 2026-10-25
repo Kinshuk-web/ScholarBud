@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scholar Bud - Your Ultimate AI Study Workspace</title>
     <link rel="icon" type="image/png" href="logo-small.png">
-	<link rel="shortcut icon" href="logo-small.png">
-	<link rel="apple-touch-icon" href="logo-small.png">
+    <link rel="shortcut icon" href="logo-small.png">
+    <link rel="apple-touch-icon" href="logo-small.png">
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -531,7 +531,9 @@
             orgName: localStorage.getItem('scholarbud_org_name') || '',
             orgAdminKey: '', 
             memberName: localStorage.getItem('scholarbud_member_name') || '',
-            orgs: (function(){ try { return JSON.parse(localStorage.getItem('scholarbud_orgs') || '[]'); } catch(e){ return []; } })()
+            orgs: (function(){ try { return JSON.parse(localStorage.getItem('scholarbud_orgs') || '[]'); } catch(e){ return []; } })(),
+            pending: [],
+            resources: (function(){ try { return JSON.parse(localStorage.getItem('scholarbud_resources_local') || '[]'); } catch(e){ return []; } })()
         };
 
         window.appId = typeof __app_id !== 'undefined' ? __app_id : 'scholar-bud-app';
@@ -652,6 +654,23 @@
             }
             if (splash) splash.classList.add('hidden');
 
+            if (mode === 'pending') {
+                document.getElementById('welcome-auth-card').classList.remove('hidden');
+                document.getElementById('landing-selection-panel').classList.add('hidden');
+                document.getElementById('auth-verification-panel').classList.add('hidden');
+                document.getElementById('org-details-form').classList.add('hidden');
+                document.getElementById('org-join-form').classList.add('hidden');
+                const pp = document.getElementById('pending-panel');
+                if (pp) pp.classList.remove('hidden');
+                const pn = document.getElementById('pending-org-name');
+                if (pn) pn.innerText = window.appState.orgName || 'this whiteboard';
+                document.getElementById('app-main-layout').classList.add('hidden');
+                return;
+            }
+
+            const ppHide = document.getElementById('pending-panel');
+            if (ppHide) ppHide.classList.add('hidden');
+
             if (mode === 'individual') {
                 configureUserInterfacePrivileges();
                 document.getElementById('welcome-auth-card').classList.add('hidden');
@@ -715,15 +734,19 @@
             }
             
             const badge = document.getElementById('sidebar-role-badge');
-            if (mode === 'admin') {
-                badge.innerText = "Admin Account";
-                badge.className = "text-[9px] bg-indigo-500 text-white font-bold py-0.5 px-2 rounded-full mt-1 inline-block";
-            } else if (mode === 'member') {
-                badge.innerText = "Member";
+            const r = myRole();
+            if (r === 'headadmin') {
+                badge.innerText = "Head Admin";
                 badge.className = "text-[9px] bg-amber-500 text-white font-bold py-0.5 px-2 rounded-full mt-1 inline-block";
+            } else if (r === 'admin') {
+                badge.innerText = "Admin";
+                badge.className = "text-[9px] bg-indigo-500 text-white font-bold py-0.5 px-2 rounded-full mt-1 inline-block";
+            } else if (r === 'member') {
+                badge.innerText = "Member";
+                badge.className = "text-[9px] bg-slate-500 text-white font-bold py-0.5 px-2 rounded-full mt-1 inline-block";
             } else {
                 badge.innerText = "Individual";
-                badge.className = "text-[9px] bg-slate-500 text-white font-bold py-0.5 px-2 rounded-full mt-1 inline-block";
+                badge.className = "text-[9px] bg-emerald-500 text-white font-bold py-0.5 px-2 rounded-full mt-1 inline-block";
             }
         }
 
@@ -843,7 +866,7 @@
                 name: window.appState.userDisplayName || 'Classroom Teacher',
                 email: window.appState.userEmail || 'Admin Contact',
                 photo: window.appState.userPhotoURL || '',
-                role: 'admin',
+                role: 'headadmin',
                 joinedAt: new Date().toISOString()
             };
 
@@ -892,28 +915,34 @@
                     if (snap.exists()) {
                         const cloudData = snap.data();
                         
-                        let activeMembers = cloudData.members || [];
-                        const exists = activeMembers.some(m => m.uid === window.appState.userId);
-                        if (!exists) {
-                            activeMembers.push({
-                                uid: window.appState.userId,
-                                name: nickInput,
-                                email: window.appState.userEmail || '',
-                                photo: window.appState.userPhotoURL || '',
-                                role: 'member',
-                                joinedAt: new Date().toISOString()
-                            });
+                        const members = cloudData.members || [];
+                        const pendingList = cloudData.pending || [];
+                        const alreadyIn = members.some(m => m.uid === window.appState.userId);
+
+                        if (alreadyIn) {
+                            const meRec = members.filter(m => m.uid === window.appState.userId)[0] || {};
+                            window.appState.userMode = modeForRole(meRec.role);
+                            window.appState.members = members;
+                        } else {
+                            if (!pendingList.some(p => p.uid === window.appState.userId)) {
+                                pendingList.push({
+                                    uid: window.appState.userId,
+                                    name: nickInput,
+                                    email: window.appState.userEmail || '',
+                                    photo: window.appState.userPhotoURL || '',
+                                    requestedAt: new Date().toISOString()
+                                });
+                                await window.setDoc(orgRef, { ...cloudData, pending: pendingList });
+                            }
+                            window.appState.userMode = 'pending';
                         }
 
-                        await window.setDoc(orgRef, { ...cloudData, members: activeMembers });
-
-                        window.appState.userMode = 'member';
                         window.appState.orgCode = codeInput;
                         window.appState.orgName = cloudData.orgName;
                         window.appState.memberName = nickInput;
-                        window.appState.members = activeMembers;
+                        window.appState.pending = pendingList;
 
-                        localStorage.setItem('scholarbud_user_mode', 'member');
+                        localStorage.setItem('scholarbud_user_mode', window.appState.userMode);
                         localStorage.setItem('scholarbud_org_code', codeInput);
                         localStorage.setItem('scholarbud_org_name', cloudData.orgName);
                         localStorage.setItem('scholarbud_member_name', nickInput);
@@ -926,10 +955,16 @@
             }
 
             if (successfulJoin) {
-                window.OrgManager.add({ code: window.appState.orgCode, name: window.appState.orgName, role: 'member', memberName: nickInput });
-                localStorage.setItem('scholarbud_last_workspace', window.appState.orgCode);
-                evaluateModeSelection();
-                NotificationManager.show(`Successfully joined classroom: "${window.appState.orgName}"`, "success");
+                if (window.appState.userMode === 'pending') {
+                    setupPendingWatch(window.appState.orgCode);
+                    evaluateModeSelection();
+                    NotificationManager.show('Request sent to "' + window.appState.orgName + '". An admin has to approve you.', 'info');
+                } else {
+                    window.OrgManager.add({ code: window.appState.orgCode, name: window.appState.orgName, role: myRole() || 'member', memberName: nickInput });
+                    localStorage.setItem('scholarbud_last_workspace', window.appState.orgCode);
+                    evaluateModeSelection();
+                    NotificationManager.show(`Successfully joined classroom: "${window.appState.orgName}"`, "success");
+                }
             } else {
                 NotificationManager.show("Organisation not found or cloud communication is offline. Check credentials.", "error");
             }
@@ -1009,7 +1044,10 @@
                 orgCode: window.appState.orgCode,
                 orgName: window.appState.orgName,
                 adminUserId: window.appState.userId,
+                ownerUserId: window.appState.userId,
                 members: window.appState.members || [],
+                pending: window.appState.pending || [],
+                resources: window.appState.resources || [],
                 tasks: window.appState.tasks,
                 calendarEvents: window.appState.calendarEvents,
                 notes: window.appState.notes,
@@ -1045,6 +1083,8 @@
                         window.appState.documents = cloudData.documents || [];
                         window.appState.presentations = cloudData.presentations || [];
                         window.appState.members = cloudData.members || [];
+                        window.appState.pending = cloudData.pending || [];
+                        window.appState.resources = cloudData.resources || [];
                         loaded = true;
                     }
                 } catch (e) {
@@ -1070,7 +1110,9 @@
                             window.appState.documents = cloudData.documents || [];
                             window.appState.presentations = cloudData.presentations || [];
                             window.appState.members = cloudData.members || [];
-                            
+                            window.appState.pending = cloudData.pending || [];
+                            window.appState.resources = cloudData.resources || [];
+
                             renderApp();
                             console.log("Whiteboard directory and cards live synced!");
                         }
@@ -1192,6 +1234,21 @@
                 </div>
             </div>
 
+            <!-- PANEL E: Waiting for approval -->
+            <div id="pending-panel" class="hidden text-center space-y-5">
+                <div class="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl inline-block">
+                    <i class="fa-solid fa-hourglass-half text-amber-400 text-3xl"></i>
+                </div>
+                <h3 class="text-xl font-bold text-white">Waiting for approval</h3>
+                <p class="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
+                    Your request to join <b id="pending-org-name" class="text-white"></b> has been sent.
+                    An admin of that whiteboard has to approve you before you can see it.
+                </p>
+                <button onclick="cancelPendingJoin()" class="text-xs text-slate-400 hover:text-white font-medium">
+                    <i class="fa-solid fa-arrow-left"></i> Cancel request
+                </button>
+            </div>
+
             <!-- PANEL D: Join Organisation Parameters -->
             <div id="org-join-form" class="hidden space-y-4">
                 <h3 class="text-lg font-bold text-white text-center">Join Existing Whiteboard</h3>
@@ -1281,8 +1338,8 @@
                     <div>
                         <!-- Logo / Brand -->
                         <div class="sb-brand flex items-center space-x-3 mb-6">
-                            <div class="h-10 w-10 bg-gradient-to-tr from-violet-600 to-indigo-500 rounded-xl flex items-center justify-center text-white shrink-0">
-                                <i class="fa-solid fa-graduation-cap text-lg"></i>
+                            <div id="brand-mark" class="h-10 w-10 bg-gradient-to-tr from-violet-600 to-indigo-500 rounded-xl flex items-center justify-center text-white shrink-0">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><path d="M2 9.5 12 5l10 4.5-10 4.5L2 9.5z"/><path d="M6 11.5V16c0 1.7 2.7 3 6 3s6-1.3 6-3v-4.5"/><path d="M21 9.5V15"/></svg>
                             </div>
                             <div class="sb-hide min-w-0">
                                 <h1 class="text-lg font-extrabold tracking-tight truncate">Scholar Bud</h1>
@@ -1369,6 +1426,10 @@
                             <button id="install-app-btn" class="w-full mb-2 bg-indigo-500/10 text-indigo-500 border border-indigo-500/25 py-2.5 rounded-xl hover:bg-indigo-500 hover:text-white transition-all text-xs font-bold flex items-center justify-center gap-2">
                                 <i class="fa-solid fa-download"></i> Install app
                             </button>
+                            <div class="mb-2">
+                                <p class="text-[10px] font-bold uppercase tracking-wider sb-muted mb-1.5">App logo</p>
+                                <div id="logo-picker" class="flex items-center gap-1.5 flex-wrap"></div>
+                            </div>
                             <div id="theme-switch" class="flex items-center gap-1 p-1 rounded-xl sb-card mb-2">
                                 <button data-mode="light" onclick="setThemeMode('light')" class="flex-1 text-[10px] font-bold py-1.5 rounded-lg transition-all flex items-center justify-center gap-1"><i class="fa-solid fa-sun"></i> Light</button>
                                 <button data-mode="dark" onclick="setThemeMode('dark')" class="flex-1 text-[10px] font-bold py-1.5 rounded-lg transition-all flex items-center justify-center gap-1"><i class="fa-solid fa-moon"></i> Dark</button>
@@ -1669,7 +1730,7 @@
 
                     <!-- PANEL 4: CHATBOT -->
                     <section id="panel-chatbot" class="tab-panel h-[calc(100vh-190px)] md:h-[calc(100vh-140px)] min-h-[430px] flex flex-col justify-between hidden">
-                        <div class="flex-1 flex flex-col md:flex-row gap-6 overflow-hidden h-full min-h-0">
+                        <div class="flex-1 flex flex-col gap-6 overflow-hidden h-full min-h-0">
                             
                             <!-- Messages -->
                             <div class="flex-1 flex flex-col bg-white dark:bg-slate-800 rounded-3xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm overflow-hidden h-full min-h-0">
@@ -1742,28 +1803,7 @@
                                 </div>
                             </div>
                             
-                            <div class="hidden md:flex md:w-80 bg-slate-50 dark:bg-slate-800/45 rounded-3xl p-5 border border-slate-200/60 dark:border-slate-700/50 flex-col h-full overflow-hidden shrink-0 font-sans">
-                                <h4 class="font-extrabold text-xs uppercase tracking-wider text-slate-800 dark:text-white mb-3">AI Sandbox Tools</h4>
-                                <p class="text-[10px] text-slate-400 mb-4 font-medium leading-relaxed font-sans">Scholar Buddy has system authorization to compile, append, and design resource directories.</p>
-                                
-                                <div class="flex-1 flex flex-col space-y-4 overflow-y-auto min-h-0">
-                                    <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200/50 dark:border-slate-700/50 shadow-sm animate-fade-in">
-                                        <div class="flex items-center justify-between text-xs font-bold mb-1">
-                                            <span>Whiteboard Notes</span>
-                                            <span class="text-[9px] bg-emerald-100 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-400 px-1.5 py-0.5 rounded font-mono uppercase">Sync Ready</span>
-                                        </div>
-                                        <p class="text-[10px] text-slate-400 leading-normal font-sans">Compiles facts, terms, or snippets directly inside Workspace notes.</p>
-                                    </div>
-                                    <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200/50 dark:border-slate-700/50 shadow-sm animate-fade-in">
-                                        <div class="flex items-center justify-between text-xs font-bold mb-1">
-                                            <span>Document Synthesis</span>
-                                            <span class="text-[9px] bg-emerald-100 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-400 px-1.5 py-0.5 rounded font-mono uppercase">Sync Ready</span>
-                                        </div>
-                                        <p class="text-[10px] text-slate-400 leading-normal font-sans">Writes deep-dive summaries about complex theories.</p>
-                                    </div>
-                                </div>
                             </div>
-                        </div>
                     </section>
 
                     <!-- PANEL 5: WORKSPACE -->
@@ -1779,6 +1819,29 @@
                             <button onclick="selectWorkspaceSub('slides')" id="wsub-slides" class="wsub-item border-b-2 border-transparent px-1 py-3 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-all flex items-center gap-2 whitespace-nowrap font-sans">
                                 <i class="fa-solid fa-presentation-screen text-emerald-500"></i> Slide Decks
                             </button>
+                            <button onclick="selectWorkspaceSub('files')" id="wsub-files" class="wsub-item border-b-2 border-transparent px-1 py-3 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-all flex items-center gap-2 whitespace-nowrap font-sans">
+                                <i class="fa-solid fa-paperclip text-rose-500"></i> Shared Files
+                            </button>
+                        </div>
+
+                        <!-- Sub-panel: Shared Files -->
+                        <div id="wsub-panel-files" class="wsub-panel hidden space-y-6 font-sans">
+                            <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 shadow-sm space-y-4">
+                                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                    <div>
+                                        <h3 class="font-extrabold text-xs uppercase tracking-widest text-slate-800 dark:text-white">Shared with everyone here</h3>
+                                        <p class="text-[11px] text-slate-400 mt-1">Upload a document, photo or notes file so the other members can open it.</p>
+                                    </div>
+                                    <div class="shrink-0">
+                                        <input type="file" id="shared-file-input" class="hidden" onchange="handleSharedFileSelect(event)">
+                                        <button onclick="document.getElementById('shared-file-input').click()" class="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-550 text-white font-bold text-xs px-4 py-3 rounded-xl transition-all flex items-center justify-center gap-2">
+                                            <i class="fa-solid fa-cloud-arrow-up"></i> Upload a file
+                                        </button>
+                                    </div>
+                                </div>
+                                <p class="text-[10px] text-slate-400">Keep files under 400 KB so they stay in sync for everyone.</p>
+                                <div id="shared-files-list" class="space-y-2"></div>
+                            </div>
                         </div>
 
                         <!-- Sub-panel: Notes -->
@@ -2255,21 +2318,29 @@
         }
 
         async function toggleTask(id) {
-            if (window.appState.userMode === 'member') {
-                NotificationManager.show("You cannot complete or check tasks inside this classroom. Ask Admin to check it!", "error");
+            const task = window.appState.tasks.find(t => t.id === id);
+            if (!task) return;
+
+            // Inside an organisation, everyone ticks off their OWN completion.
+            if (inOrg()) {
+                task.completions = task.completions || {};
+                const uid = window.appState.userId || 'me';
+                if (task.completions[uid]) {
+                    delete task.completions[uid];
+                    NotificationManager.show('Marked as not done.', 'info');
+                } else {
+                    task.completions[uid] = {
+                        name: window.appState.userDisplayName || window.appState.memberName || 'Member',
+                        at: new Date().toISOString()
+                    };
+                    NotificationManager.show('Nice - marked as done.', 'success');
+                }
+                await saveAdminOrganisationData();
                 return;
             }
 
-            const task = window.appState.tasks.find(t => t.id === id);
-            if (task) {
-                task.completed = !task.completed;
-                
-                if (window.appState.userMode === 'admin') {
-                    await saveAdminOrganisationData();
-                } else {
-                    await TaskManager.saveTasks();
-                }
-            }
+            task.completed = !task.completed;
+            await TaskManager.saveTasks();
         }
 
         async function deleteTask(id) {
@@ -2430,6 +2501,7 @@
             - ABSOLUTELY REFUSE to assist with non-academic questions (e.g. video games, celebrities, gossip, shopping, sports, jokes, creative fiction roleplays).
             - If a query is NOT academic or educational, politely state: "As your Scholar Buddy study partner, I must only assist you with studies, coding, general knowledge, or academic task creations! Let's find a study topic to research instead."
             - You cannot generate images.
+            - Today's date is ${new Date().toISOString().slice(0, 10)} (use this when marking calendar dates).
 
             TOOL SYSTEM DESIGN:
             You are connected to live student tools. If an Admin user asks to write notes, create slides, or search tutorials, you should call the appropriate tool.
@@ -2490,6 +2562,54 @@
                                 query: { type: 'STRING', description: 'Academic search terms' }
                             },
                             required: ['query']
+                        }
+                    },
+                    {
+                        name: 'createPresentation',
+                        description: 'Builds a slide deck with titled slides and bullet points.',
+                        parameters: {
+                            type: 'OBJECT',
+                            properties: {
+                                title: { type: 'STRING', description: 'Deck title' },
+                                slides: {
+                                    type: 'ARRAY',
+                                    description: 'The slides in order',
+                                    items: {
+                                        type: 'OBJECT',
+                                        properties: {
+                                            title: { type: 'STRING' },
+                                            bullets: { type: 'ARRAY', items: { type: 'STRING' } }
+                                        },
+                                        required: ['title', 'bullets']
+                                    }
+                                }
+                            },
+                            required: ['title', 'slides']
+                        }
+                    },
+                    {
+                        name: 'addTask',
+                        description: 'Adds an active to-do for today on the task board.',
+                        parameters: {
+                            type: 'OBJECT',
+                            properties: {
+                                text: { type: 'STRING', description: 'What the student needs to do' },
+                                category: { type: 'STRING', description: 'Studies, Coding, General or Exam Prep' }
+                            },
+                            required: ['text']
+                        }
+                    },
+                    {
+                        name: 'addCalendarEvent',
+                        description: 'Marks a date on the student calendar (exam, deadline, revision block).',
+                        parameters: {
+                            type: 'OBJECT',
+                            properties: {
+                                title: { type: 'STRING', description: 'What the event is' },
+                                date: { type: 'STRING', description: 'Date as YYYY-MM-DD' },
+                                time: { type: 'STRING', description: 'Time as HH:MM (24h), optional' }
+                            },
+                            required: ['title', 'date']
                         }
                     }
                 ]
@@ -2582,6 +2702,50 @@
                 executeYouTubeFetch(args.query);
                 NotificationManager.show(`YouTube lessons populated for: "${args.query}"`, "info");
                 return `[AI Tool Activated] I loaded visual tutorial video resources for: "${args.query}" directly onto your Dashboard feed!`;
+            }
+
+            if (name === 'createPresentation') {
+                const pres = {
+                    id: genId(),
+                    title: args.title || 'AI Slide Deck',
+                    slides: (args.slides || []).map(function (s) {
+                        return { title: s.title || 'Slide', bullets: s.bullets || [] };
+                    })
+                };
+                window.appState.presentations.push(pres);
+                window.currentPresentationId = pres.id;
+                window.currentSlideIndex = 0;
+                if (window.appState.userMode === 'admin') { await saveAdminOrganisationData(); } else { renderApp(); }
+                NotificationManager.show(`Slide deck created: "${pres.title}"!`, "success");
+                return `[Done] I built a slide deck called "${pres.title}" with ${pres.slides.length} slides. Open 'My Workspace' then 'Slide Decks' to see it.`;
+            }
+
+            if (name === 'addTask') {
+                window.appState.tasks.push({
+                    id: genId(),
+                    text: args.text || 'Study task',
+                    completed: false,
+                    category: args.category || 'Studies',
+                    addedTime: new Date().getTime(),
+                    completions: {}
+                });
+                if (window.appState.userMode === 'admin') { await saveAdminOrganisationData(); } else { await TaskManager.saveTasks(); }
+                NotificationManager.show('Task added to your board.', 'success');
+                return `[Done] I added "${args.text}" to your tasks for today.`;
+            }
+
+            if (name === 'addCalendarEvent') {
+                const ev = {
+                    id: genId(),
+                    title: args.title || 'Study block',
+                    date: args.date,
+                    time: args.time || '09:00'
+                };
+                window.appState.calendarEvents.push(ev);
+                window.appState.calendarEvents.sort(function (a, b) { return new Date(a.date + 'T' + a.time) - new Date(b.date + 'T' + b.time); });
+                if (window.appState.userMode === 'admin') { await saveAdminOrganisationData(); } else { renderApp(); }
+                NotificationManager.show('Date marked on your calendar.', 'success');
+                return `[Done] I marked "${ev.title}" on ${ev.date} at ${ev.time} in your calendar.`;
             }
 
             return "Tool completed.";
@@ -2946,6 +3110,8 @@
                     activeBtn.className = "wsub-item border-b-2 border-blue-600 px-1 py-3 text-sm font-bold text-blue-600 dark:text-blue-400 transition-all flex items-center gap-2 whitespace-nowrap font-sans";
                 } else if (subTabId === 'slides') {
                     activeBtn.className = "wsub-item border-b-2 border-emerald-600 px-1 py-3 text-sm font-bold text-emerald-600 dark:text-emerald-400 transition-all flex items-center gap-2 whitespace-nowrap font-sans";
+                } else if (subTabId === 'files') {
+                    activeBtn.className = "wsub-item border-b-2 border-rose-500 px-1 py-3 text-sm font-bold text-rose-500 transition-all flex items-center gap-2 whitespace-nowrap font-sans";
                 }
             }
         }
@@ -3387,54 +3553,94 @@
             configureUserInterfacePrivileges();
             if (window.updateChatProviderStatus) updateChatProviderStatus();
             if (window.OrgManager) OrgManager.render();
+            if (window.renderSharedFiles) renderSharedFiles();
         }
 
         function renderClassroomDirectory() {
             const widget = document.getElementById('classroom-directory-widget');
             const list = document.getElementById('classroom-members-list');
             const badge = document.getElementById('directory-count-badge');
-
             if (!widget || !list) return;
 
             const mode = window.appState.userMode;
-            if (mode !== 'admin' && mode !== 'member') {
-                widget.classList.add('hidden');
-                return;
-            }
-
+            if (mode !== 'admin' && mode !== 'member') { widget.classList.add('hidden'); return; }
             widget.classList.remove('hidden');
             list.innerHTML = '';
 
             const members = window.appState.members || [];
-            badge.innerText = `${members.length} Member${members.length !== 1 ? 's' : ''}`;
+            const pending = window.appState.pending || [];
+            const canManage = isOrgAdmin();
+            const iAmOwner = isHeadAdmin();
 
-            if (members.length === 0) {
-                list.innerHTML = `<div class="col-span-full text-center py-4 text-slate-400 text-xs font-medium font-sans">Initializing classroom directories...</div>`;
+            badge.innerText = members.length + ' Member' + (members.length !== 1 ? 's' : '');
+
+            if (!members.length) {
+                list.innerHTML = '<div class="col-span-full text-center py-4 text-slate-400 text-xs font-medium">Loading members...</div>';
                 return;
             }
 
-            members.forEach(m => {
-                const card = document.createElement('div');
-                card.className = "bg-slate-50 dark:bg-slate-700/40 p-3.5 rounded-xl border border-slate-200/50 dark:border-slate-700/50 flex items-center gap-3 animate-fade-in";
-                
-                const avatarSrc = m.photo || `https://placehold.co/100x100/6366f1/ffffff?text=${(m.name || 'S')[0]}`;
-                const roleBadge = m.role === 'admin' 
-                    ? `<span class="bg-indigo-600 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider font-sans">Teacher / Admin</span>`
-                    : `<span class="bg-slate-200 text-slate-700 dark:bg-slate-600 dark:text-slate-200 text-[8px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider font-sans">Student</span>`;
+            members.forEach(function (m) {
+                const role = m.role || 'member';
+                const roleClass = role === 'headadmin'
+                    ? 'bg-amber-500 text-white'
+                    : (role === 'admin' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-700 dark:bg-slate-600 dark:text-slate-200');
+                const isMe = m.uid === window.appState.userId;
+                const avatarSrc = m.photo || ('https://placehold.co/100x100/6366f1/ffffff?text=' + encodeURIComponent((m.name || 'S')[0]));
 
-                card.innerHTML = `
-                    <img class="h-10 w-10 rounded-xl object-cover border border-indigo-550/20" src="${avatarSrc}" onerror="this.src='https://placehold.co/100'" alt="${m.name}">
-                    <div class="overflow-hidden flex-1 font-sans">
-                        <h5 class="text-xs font-black text-slate-800 dark:text-slate-100 truncate flex items-center gap-1">
-                            ${m.name}
-                            ${m.uid === window.appState.userId ? '<span class="text-[9px] text-indigo-500 font-bold font-sans">(You)</span>' : ''}
-                        </h5>
-                        <p class="text-[10px] text-slate-400 truncate">${m.email || 'Classroom Student'}</p>
-                        <div class="mt-1.5">${roleBadge}</div>
-                    </div>
-                `;
+                let controls = '';
+                if (canManage && !isMe && role !== 'headadmin') {
+                    if (iAmOwner) {
+                        controls += '<select data-role-for="' + m.uid + '" class="text-[9px] font-bold bg-transparent border border-slate-300 dark:border-slate-600 rounded-md px-1 py-0.5">' +
+                            '<option value="member"' + (role === 'member' ? ' selected' : '') + '>Member</option>' +
+                            '<option value="admin"' + (role === 'admin' ? ' selected' : '') + '>Admin</option>' +
+                            '</select>';
+                    }
+                    controls += '<button data-remove="' + m.uid + '" title="Remove" class="h-6 w-6 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-500/10"><i class="fa-solid fa-user-minus text-[10px]"></i></button>';
+                }
+
+                const card = document.createElement('div');
+                card.className = 'bg-slate-50 dark:bg-slate-700/40 p-3.5 rounded-xl border border-slate-200/50 dark:border-slate-700/50 flex items-center gap-3 animate-fade-in';
+                card.innerHTML =
+                    '<img class="h-10 w-10 rounded-xl object-cover border border-indigo-500/20 shrink-0" src="' + avatarSrc + '" alt="" onerror="this.src=\'https://placehold.co/100\'">' +
+                    '<div class="overflow-hidden flex-1 min-w-0">' +
+                        '<h5 class="text-xs font-black truncate flex items-center gap-1">' + window.escapeHtml(m.name || 'Member') +
+                            (isMe ? '<span class="text-[9px] text-indigo-500 font-bold">(You)</span>' : '') + '</h5>' +
+                        '<p class="text-[10px] text-slate-400 truncate">' + window.escapeHtml(m.email || '') + '</p>' +
+                        '<div class="mt-1.5 flex items-center gap-2 flex-wrap">' +
+                            '<span class="' + roleClass + ' text-[8px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider">' + roleLabel(role) + '</span>' +
+                            controls +
+                        '</div>' +
+                    '</div>';
                 list.appendChild(card);
             });
+
+            if (canManage && pending.length) {
+                const head = document.createElement('div');
+                head.className = 'col-span-full mt-2 text-[10px] font-bold uppercase tracking-wider text-amber-500';
+                head.textContent = 'Waiting for approval (' + pending.length + ')';
+                list.appendChild(head);
+                pending.forEach(function (p) {
+                    const card = document.createElement('div');
+                    card.className = 'bg-amber-50/70 dark:bg-amber-500/10 p-3.5 rounded-xl border border-amber-300/60 dark:border-amber-500/30 flex items-center gap-3';
+                    const src = p.photo || ('https://placehold.co/100x100/f59e0b/ffffff?text=' + encodeURIComponent((p.name || 'S')[0]));
+                    card.innerHTML =
+                        '<img class="h-10 w-10 rounded-xl object-cover shrink-0" src="' + src + '" alt="" onerror="this.src=\'https://placehold.co/100\'">' +
+                        '<div class="overflow-hidden flex-1 min-w-0">' +
+                            '<h5 class="text-xs font-black truncate">' + window.escapeHtml(p.name || 'Student') + '</h5>' +
+                            '<p class="text-[10px] text-slate-400 truncate">' + window.escapeHtml(p.email || '') + '</p>' +
+                        '</div>' +
+                        '<div class="flex items-center gap-1 shrink-0">' +
+                            '<button data-approve="' + p.uid + '" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-600 text-white">Approve</button>' +
+                            '<button data-reject="' + p.uid + '" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-slate-200 dark:bg-slate-600 text-slate-700 dark:text-slate-200">Reject</button>' +
+                        '</div>';
+                    list.appendChild(card);
+                });
+            }
+
+            list.querySelectorAll('[data-approve]').forEach(function (b) { b.onclick = function () { approveMember(b.getAttribute('data-approve')); }; });
+            list.querySelectorAll('[data-reject]').forEach(function (b) { b.onclick = function () { rejectMember(b.getAttribute('data-reject')); }; });
+            list.querySelectorAll('[data-remove]').forEach(function (b) { b.onclick = function () { removeMember(b.getAttribute('data-remove')); }; });
+            list.querySelectorAll('[data-role-for]').forEach(function (s) { s.onchange = function () { setMemberRole(s.getAttribute('data-role-for'), s.value); }; });
         }
 
         function renderTasksList() {
@@ -3469,19 +3675,25 @@
 
                 const tagColor = categoryColors[task.category] || categoryColors.General;
 
+                const mine = taskDoneForMe(task);
+                const doneCount = taskCompletionCount(task);
+                const memberCount = (window.appState.members || []).length;
+                const showCount = inOrg() && isOrgAdmin();
+
                 div.innerHTML = `
                     <div class="flex items-center space-x-3 flex-1 overflow-hidden" onclick="toggleTask('${task.id}')">
                         <button class="text-base shrink-0 focus:outline-none">
-                            ${task.completed 
-                                ? '<i class="fa-solid fa-circle-check text-indigo-600 dark:text-indigo-400"></i>' 
+                            ${mine
+                                ? '<i class="fa-solid fa-circle-check text-indigo-600 dark:text-indigo-400"></i>'
                                 : '<i class="fa-regular fa-circle text-slate-300 hover:text-indigo-500"></i>'
                             }
                         </button>
-                        <span class="text-xs font-semibold text-slate-700 dark:text-slate-200 select-none cursor-pointer truncate strike-through ${task.completed ? 'strike-active text-slate-400 dark:text-slate-500' : ''}">
-                            ${task.text}
+                        <span class="text-xs font-semibold text-slate-700 dark:text-slate-200 select-none cursor-pointer truncate strike-through ${mine ? 'strike-active text-slate-400 dark:text-slate-500' : ''}">
+                            ${window.escapeHtml(task.text)}
                         </span>
                     </div>
                     <div class="flex items-center space-x-2 shrink-0 font-sans">
+                        ${showCount ? `<button onclick="event.stopPropagation(); showTaskCompletions('${task.id}')" title="See who has done this" class="text-[9px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">${doneCount}/${memberCount} done</button>` : ''}
                         <span class="text-[9px] font-bold px-2 py-0.5 rounded-md ${tagColor}">${task.category}</span>
                         <button onclick="deleteTask('${task.id}')" class="admin-only-action text-slate-400 hover:text-rose-500 p-1.5 rounded transition-colors text-xs">
                             <i class="fa-solid fa-xmark"></i>
@@ -3805,6 +4017,113 @@
         }
 
 
+
+        /* ============================================================
+           App logo chooser
+           ============================================================ */
+        window.AppLogos = {
+            list: [
+                { id: 'cap',    name: 'Scholar cap' },
+                { id: 'diya',   name: 'Diya (festival)' },
+                { id: 'kite',   name: 'Kite (Sankranti)' },
+                { id: 'flag',   name: 'Tricolour' },
+                { id: 'atom',   name: 'Science' },
+                { id: 'rocket', name: 'Rocket' }
+            ],
+            svg: function (id) {
+                var head = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px">';
+                var body;
+                if (id === 'diya') body = '<path d="M4 14h16l-2.2 5H6.2L4 14z"/><path d="M12 3c1.6 1.6 2.2 3 2.2 4.2A2.2 2.2 0 0 1 12 9.4a2.2 2.2 0 0 1-2.2-2.2C9.8 6 10.4 4.6 12 3z"/>';
+                else if (id === 'kite') body = '<path d="M12 2 19 9l-7 7-7-7 7-7z"/><path d="M12 16v5"/><path d="M9 21h6"/>';
+                else if (id === 'flag') body = '<path d="M6 21V3"/><path d="M6 4h12l-2 3 2 3H6"/>';
+                else if (id === 'atom') body = '<circle cx="12" cy="12" r="2"/><ellipse cx="12" cy="12" rx="9" ry="4"/><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(120 12 12)"/>';
+                else if (id === 'rocket') body = '<path d="M12 2c3 2.5 4.5 6 4.5 9.5 0 2-.7 3.8-1.8 5.2H9.3A8.7 8.7 0 0 1 7.5 11.5C7.5 8 9 4.5 12 2z"/><circle cx="12" cy="9" r="1.6"/><path d="M9.3 16.7 7 21l3-1.2M14.7 16.7 17 21l-3-1.2"/>';
+                else body = '<path d="M2 9.5 12 5l10 4.5-10 4.5L2 9.5z"/><path d="M6 11.5V16c0 1.7 2.7 3 6 3s6-1.3 6-3v-4.5"/><path d="M21 9.5V15"/>';
+                return head + body + '</svg>';
+            },
+            get: function () { return localStorage.getItem('scholarbud_logo') || 'cap'; },
+            set: function (id) {
+                localStorage.setItem('scholarbud_logo', id);
+                this.apply(); this.render();
+                NotificationManager.show('App logo changed.', 'success');
+            },
+            apply: function () {
+                var box = document.getElementById('brand-mark');
+                if (box) box.innerHTML = this.svg(this.get());
+            },
+            render: function () {
+                var host = document.getElementById('logo-picker');
+                if (!host) return;
+                host.innerHTML = '';
+                var self = this;
+                this.list.forEach(function (l) {
+                    var b = document.createElement('button');
+                    var active = (self.get() === l.id);
+                    b.title = l.name;
+                    b.className = 'h-8 w-8 rounded-lg flex items-center justify-center transition-all ' +
+                        (active ? 'bg-indigo-600 text-white' : 'sb-card text-slate-400 hover:text-indigo-500');
+                    b.innerHTML = self.svg(l.id);
+                    b.onclick = function () { self.set(l.id); };
+                    host.appendChild(b);
+                });
+            }
+        };
+
+        /* ============================================================
+           No right-click menu (but keep it inside text boxes so paste works)
+           ============================================================ */
+        document.addEventListener('contextmenu', function (e) {
+            var tag = (e.target && e.target.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea') return;
+            e.preventDefault();
+        });
+
+        /* ============================================================
+           Auto refresh: only inside the installed mobile app.
+           Every 30s it checks whether a newer version was published,
+           and quietly reloads if so. It never interrupts typing.
+           ============================================================ */
+        window.AutoRefresh = (function () {
+            var stamp = null, timer = null, EVERY = 30000;
+
+            function installed() {
+                return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+                       window.navigator.standalone === true;
+            }
+            function isPhone() { return /android|iphone|ipad|ipod/i.test(navigator.userAgent || ''); }
+            function enabled() { return !!(installed() || isPhone()); }
+
+            async function currentStamp() {
+                try {
+                    var r = await fetch(location.pathname + location.search, { method: 'HEAD', cache: 'no-store' });
+                    return r.headers.get('last-modified') || r.headers.get('etag') || '';
+                } catch (e) { return ''; }
+            }
+            function busy() {
+                var a = document.activeElement;
+                var tag = (a && a.tagName || '').toLowerCase();
+                if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+                var modals = document.querySelectorAll('.fixed.inset-0');
+                for (var i = 0; i < modals.length; i++) {
+                    if (!modals[i].classList.contains('hidden')) return true;
+                }
+                return false;
+            }
+            async function tick() {
+                if (document.visibilityState !== 'visible') return;
+                var s = await currentStamp();
+                if (!s) return;
+                if (stamp === null) { stamp = s; return; }
+                if (s !== stamp && !busy()) location.reload();
+            }
+            function start() {
+                if (!enabled()) return;
+                currentStamp().then(function (s) { stamp = s; });
+                timer = setInterval(tick, EVERY);
+            }
+            return { start: start, enabled: enabled, check: tick };
+        })();
+
         /* ============================================================
            Minimal theme engine + sidebar/pill chrome + organisations
            + festival easter eggs
@@ -3918,7 +4237,7 @@
                 if (!o) return;
                 window.appState.orgCode = o.code;
                 window.appState.orgName = o.name;
-                window.appState.userMode = o.role === 'admin' ? 'admin' : 'member';
+                window.appState.userMode = modeForRole(o.role);
                 window.appState.memberName = o.memberName || '';
                 localStorage.setItem('scholarbud_user_mode', window.appState.userMode);
                 localStorage.setItem('scholarbud_org_code', o.code);
@@ -4001,6 +4320,235 @@
             document.getElementById('auth-verification-panel').classList.add('hidden');
             document.getElementById('org-details-form').classList.add('hidden');
             document.getElementById('org-join-form').classList.add('hidden');
+        }
+
+        /* ============================================================
+           Ranks, approvals, shared files and task tracking
+           Ranks: head admin (owner)  >  admin  >  member
+           ============================================================ */
+
+        /* ---------- who am I in this organisation? ---------- */
+        function myMemberRecord() {
+            var uid = window.appState.userId;
+            return (window.appState.members || []).filter(function (m) { return m.uid === uid; })[0] || null;
+        }
+        function myRole() {
+            var rec = myMemberRecord();
+            if (rec && rec.role) return rec.role;
+            if (window.appState.userMode === 'admin') return 'headadmin';
+            if (window.appState.userMode === 'member') return 'member';
+            return '';
+        }
+        function isHeadAdmin() { return myRole() === 'headadmin'; }
+        function isOrgAdmin() { return myRole() === 'headadmin' || myRole() === 'admin'; }
+        function inOrg() { return window.appState.userMode === 'admin' || window.appState.userMode === 'member'; }
+        function roleLabel(role) {
+            if (role === 'headadmin') return 'Head Admin';
+            if (role === 'admin') return 'Admin';
+            return 'Member';
+        }
+        function modeForRole(role) { return (role === 'headadmin' || role === 'admin') ? 'admin' : 'member'; }
+
+        function formatWhen(iso) {
+            if (!iso) return '';
+            var d = new Date(iso);
+            if (isNaN(d.getTime())) return '';
+            return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) + ' at ' +
+                   d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        /* ---------- approve / reject / remove / rank ---------- */
+        async function approveMember(uid) {
+            var p = (window.appState.pending || []).filter(function (x) { return x.uid === uid; })[0];
+            if (!p) return;
+            window.appState.pending = (window.appState.pending || []).filter(function (x) { return x.uid !== uid; });
+            window.appState.members.push({
+                uid: p.uid, name: p.name, email: p.email, photo: p.photo,
+                role: 'member', joinedAt: new Date().toISOString()
+            });
+            await saveAdminOrganisationData();
+            NotificationManager.show('Approved ' + (p.name || 'the new member') + '.', 'success');
+        }
+        async function rejectMember(uid) {
+            var p = (window.appState.pending || []).filter(function (x) { return x.uid === uid; })[0];
+            if (!p) return;
+            window.appState.pending = (window.appState.pending || []).filter(function (x) { return x.uid !== uid; });
+            await saveAdminOrganisationData();
+            NotificationManager.show('Request from ' + (p.name || 'that person') + ' was rejected.', 'info');
+        }
+        async function removeMember(uid) {
+            if (!isOrgAdmin()) { NotificationManager.show('Only admins can remove people.', 'error'); return; }
+            var m = (window.appState.members || []).filter(function (x) { return x.uid === uid; })[0];
+            if (!m) return;
+            if (m.role === 'headadmin') { NotificationManager.show('The Head Admin cannot be removed.', 'error'); return; }
+            window.customConfirm('Remove member', 'Remove ' + (m.name || 'this person') + ' from this whiteboard?', async function () {
+                window.appState.members = window.appState.members.filter(function (x) { return x.uid !== uid; });
+                await saveAdminOrganisationData();
+                NotificationManager.show('Member removed.', 'info');
+            });
+        }
+        async function setMemberRole(uid, role) {
+            if (!isHeadAdmin()) {
+                NotificationManager.show('Only the Head Admin can change ranks.', 'error');
+                renderClassroomDirectory();
+                return;
+            }
+            var m = (window.appState.members || []).filter(function (x) { return x.uid === uid; })[0];
+            if (!m) return;
+            m.role = role;
+            await saveAdminOrganisationData();
+            NotificationManager.show((m.name || 'Member') + ' is now ' + roleLabel(role) + '.', 'success');
+        }
+
+        /* ---------- waiting-for-approval screen ---------- */
+        function cancelPendingJoin() {
+            window.appState.userMode = '';
+            window.appState.orgCode = '';
+            window.appState.orgName = '';
+            localStorage.removeItem('scholarbud_user_mode');
+            localStorage.removeItem('scholarbud_org_code');
+            localStorage.removeItem('scholarbud_org_name');
+            if (window.unsubscribeOrgSync) { window.unsubscribeOrgSync(); window.unsubscribeOrgSync = null; }
+            evaluateModeSelection();
+        }
+
+        async function setupPendingWatch(code) {
+            if (window.unsubscribeOrgSync) { window.unsubscribeOrgSync(); window.unsubscribeOrgSync = null; }
+            if (!window.db) return;
+            try {
+                var ref = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'orgs', code);
+                window.unsubscribeOrgSync = window.onSnapshot(ref, function (snap) {
+                    if (!snap.exists()) return;
+                    var data = snap.data();
+                    var uid = window.appState.userId;
+                    var members = data.members || [];
+                    var pending = data.pending || [];
+                    var me = members.filter(function (m) { return m.uid === uid; })[0];
+                    if (me) {
+                        // approved!
+                        window.appState.members = members;
+                        window.appState.pending = pending;
+                        window.appState.userMode = modeForRole(me.role);
+                        window.appState.orgName = data.orgName || window.appState.orgName;
+                        localStorage.setItem('scholarbud_user_mode', window.appState.userMode);
+                        evaluateModeSelection();
+                        NotificationManager.show('You were approved. Welcome to ' + window.appState.orgName + '!', 'success');
+                    } else if (!pending.some(function (p) { return p.uid === uid; })) {
+                        // no longer waiting -> rejected
+                        NotificationManager.show('Your request to join was declined.', 'error');
+                        cancelPendingJoin();
+                    }
+                }, function () {});
+            } catch (e) { console.warn('pending watch failed', e); }
+        }
+
+        /* ---------- shared files (members can post for the group) ---------- */
+        window.SharedFiles = {
+            MAX_BYTES: 400 * 1024,
+            list: function () { return window.appState.resources || []; },
+            save: async function () {
+                if (inOrg()) { await saveAdminOrganisationData(); }
+                else { localStorage.setItem('scholarbud_resources_local', JSON.stringify(this.list())); renderSharedFiles(); }
+            },
+            add: async function (name, type, size, dataUrl) {
+                window.appState.resources = this.list();
+                window.appState.resources.unshift({
+                    id: genId(), name: name, type: type, size: size, dataUrl: dataUrl,
+                    by: window.appState.userDisplayName || window.appState.memberName || 'Member',
+                    byUid: window.appState.userId,
+                    at: new Date().toISOString()
+                });
+                await this.save();
+                renderSharedFiles();
+            },
+            remove: async function (id) {
+                var f = this.list().filter(function (x) { return x.id === id; })[0];
+                if (!f) return;
+                if (f.byUid !== window.appState.userId && !isOrgAdmin()) {
+                    NotificationManager.show('Only the uploader or an admin can delete this.', 'error');
+                    return;
+                }
+                window.appState.resources = this.list().filter(function (x) { return x.id !== id; });
+                await this.save();
+                NotificationManager.show('File removed.', 'info');
+            }
+        };
+
+        function handleSharedFileSelect(ev) {
+            var file = ev.target.files && ev.target.files[0];
+            if (!file) return;
+            if (file.size > window.SharedFiles.MAX_BYTES) {
+                NotificationManager.show('That file is too big (' + Math.round(file.size / 1024) + ' KB). Please keep it under ' +
+                    Math.round(window.SharedFiles.MAX_BYTES / 1024) + ' KB.', 'error');
+                ev.target.value = '';
+                return;
+            }
+            var reader = new FileReader();
+            reader.onload = function (e) {
+                window.SharedFiles.add(file.name, file.type || 'file', file.size, e.target.result);
+                NotificationManager.show('"' + file.name + '" was shared with everyone here.', 'success');
+            };
+            reader.readAsDataURL(file);
+            ev.target.value = '';
+        }
+
+        function renderSharedFiles() {
+            var host = document.getElementById('shared-files-list');
+            if (!host) return;
+            var files = window.SharedFiles.list();
+            host.innerHTML = '';
+            if (!files.length) {
+                host.innerHTML = '<p class="text-xs text-slate-400 py-3">Nothing shared yet. Upload a document or photo for everyone here to see.</p>';
+                return;
+            }
+            files.forEach(function (f) {
+                var row = document.createElement('div');
+                row.className = 'flex items-center gap-3 p-3 rounded-xl border border-slate-200/60 dark:border-slate-700/50 bg-white dark:bg-slate-800';
+                var icon = /^image\//.test(f.type) ? 'fa-image text-emerald-500'
+                         : /pdf/.test(f.type) ? 'fa-file-pdf text-rose-500'
+                         : /word|document/.test(f.type) ? 'fa-file-word text-blue-500'
+                         : /sheet|excel/.test(f.type) ? 'fa-file-excel text-emerald-600'
+                         : 'fa-file text-slate-400';
+                row.innerHTML =
+                    '<i class="fa-solid ' + icon + ' text-lg w-6 text-center shrink-0"></i>' +
+                    '<div class="min-w-0 flex-1">' +
+                        '<p class="text-xs font-bold truncate">' + window.escapeHtml(f.name) + '</p>' +
+                        '<p class="text-[10px] text-slate-400 truncate">' + window.escapeHtml(f.by || '') + ' - ' + formatWhen(f.at) +
+                        ' - ' + Math.max(1, Math.round((f.size || 0) / 1024)) + ' KB</p>' +
+                    '</div>' +
+                    '<a href="' + f.dataUrl + '" download="' + window.escapeHtml(f.name) + '" class="text-[10px] font-bold text-indigo-500 px-2 py-1 rounded-lg hover:bg-indigo-500/10 shrink-0">Open</a>' +
+                    '<button data-file-del="' + f.id + '" class="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 shrink-0"><i class="fa-solid fa-trash-can text-[10px]"></i></button>';
+                host.appendChild(row);
+            });
+            host.querySelectorAll('[data-file-del]').forEach(function (b) {
+                b.onclick = function () { window.SharedFiles.remove(b.getAttribute('data-file-del')); };
+            });
+        }
+
+        /* ---------- task completion per member ---------- */
+        function taskDoneForMe(task) {
+            if (!inOrg() || window.appState.userMode !== 'member') return !!task.completed;
+            return !!(task.completions && task.completions[window.appState.userId]);
+        }
+        function taskCompletionCount(task) {
+            return Object.keys(task.completions || {}).length;
+        }
+        function showTaskCompletions(id) {
+            var t = (window.appState.tasks || []).filter(function (x) { return x.id === id; })[0];
+            if (!t) return;
+            var c = t.completions || {};
+            var uids = Object.keys(c);
+            var body = uids.length
+                ? uids.map(function (u) { return '- ' + (c[u].name || 'Member') + '  (' + formatWhen(c[u].at) + ')'; }).join('\n')
+                : 'Nobody has marked this done yet.';
+            window.customConfirm(t.text, body, function () {});
+            // the confirm modal has no action here - hide its buttons
+            setTimeout(function () {
+                var a = document.getElementById('confirm-modal-action');
+                var b = document.getElementById('confirm-modal-cancel');
+                if (a) { a.style.display = 'none'; }
+                if (b) { b.textContent = 'Close'; }
+            }, 0);
         }
 
         /* ---------- Festival easter eggs ---------- */
@@ -4160,6 +4708,8 @@
             safe(function () { syncPill(); });
             safe(function () { EasterEgg.run(); });
             safe(function () { if (window.ScholarBudInstall) ScholarBudInstall.mount('#install-app-btn'); });
+            safe(function () { AppLogos.apply(); AppLogos.render(); });
+            safe(function () { AutoRefresh.start(); });
         };
     </script>
     <!-- Mobile bottom pill navigation -->
