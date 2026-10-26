@@ -1,7 +1,7 @@
 /* ScholarBud service worker — makes the app installable and usable offline.
    Bump CACHE when you ship a new version. */
-const CACHE = 'scholarbud-v1';
-const SHELL = ['./', './ScholarBud.html', './config.js', './manifest.webmanifest',
+const CACHE = 'scholarbud-v2';
+const SHELL = ['./', './index.html', './config.js', './manifest.webmanifest',
                './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -39,6 +39,6 @@ self.addEventListener('fetch', (e) => {
         }
         return res;
       })
-      .catch(() => caches.match(req).then((hit) => hit || caches.match('./ScholarBud.html')))
+      .catch(() => caches.match(req).then((hit) => hit || caches.match('./index.html')))
   );
 });
