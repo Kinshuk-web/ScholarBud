@@ -587,6 +587,7 @@
             memberName: localStorage.getItem('scholarbud_member_name') || '',
             orgs: (function(){ try { return JSON.parse(localStorage.getItem('scholarbud_orgs') || '[]'); } catch(e){ return []; } })(),
             pending: [],
+            ownerUserId: '',
             resources: (function(){ try { return JSON.parse(localStorage.getItem('scholarbud_resources_local') || '[]'); } catch(e){ return []; } })()
         };
 
@@ -1156,12 +1157,14 @@
                         window.appState.members = cloudData.members || [];
                         window.appState.pending = cloudData.pending || [];
                         window.appState.resources = cloudData.resources || [];
+                        window.appState.ownerUserId = cloudData.ownerUserId || cloudData.adminUserId || '';
                         loaded = true;
                     }
                 } catch (e) {
                     console.error("Firebase load error:", e);
                 }
             }
+            await healOwnerRank();
             renderApp();
         }
 
@@ -1183,6 +1186,8 @@
                             window.appState.members = cloudData.members || [];
                             window.appState.pending = cloudData.pending || [];
                             window.appState.resources = cloudData.resources || [];
+                            window.appState.ownerUserId = cloudData.ownerUserId || cloudData.adminUserId || '';
+                            healOwnerRank();
 
                             renderApp();
                             console.log("Whiteboard directory and cards live synced!");
@@ -3705,7 +3710,9 @@
             }
 
             members.forEach(function (m) {
-                const role = m.role || 'member';
+                let role = m.role || 'member';
+                // the creator's card always reads Head Admin, even on old whiteboards
+                if (m.uid === window.appState.userId && isHeadAdmin()) role = 'headadmin';
                 const roleClass = role === 'headadmin'
                     ? 'bg-amber-500 text-white'
                     : (role === 'admin' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-700 dark:bg-slate-600 dark:text-slate-200');
@@ -4672,6 +4679,18 @@
         }
         function myRole() {
             var rec = myMemberRecord();
+            var owner = window.appState.ownerUserId;
+
+            // Whoever created the whiteboard is the Head Admin. This also repairs
+            // whiteboards made before ranks existed, where the creator was saved
+            // as a plain "admin".
+            if (owner && window.appState.userId === owner) return 'headadmin';
+
+            // Older whiteboards may not record an owner at all. If nobody is a
+            // Head Admin yet, the existing admin must be the creator.
+            var hasHead = (window.appState.members || []).some(function (m) { return m.role === 'headadmin'; });
+            if (!owner && !hasHead && rec && rec.role === 'admin') return 'headadmin';
+
             if (rec && rec.role) return rec.role;
             if (window.appState.userMode === 'admin') return 'headadmin';
             if (window.appState.userMode === 'member') return 'member';
@@ -4693,6 +4712,18 @@
             if (isNaN(d.getTime())) return '';
             return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) + ' at ' +
                    d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        // Older whiteboards saved their creator as a plain "admin". Fix it once
+        // so the whole group sees the right rank.
+        async function healOwnerRank() {
+            var owner = window.appState.ownerUserId;
+            if (!owner || window.appState.userId !== owner) return;
+            var rec = myMemberRecord();
+            if (!rec) return;
+            if (rec.role === 'headadmin') return;
+            rec.role = 'headadmin';
+            try { await saveAdminOrganisationData(); } catch (e) { console.warn('rank repair failed', e); }
         }
 
         /* ---------- approve / reject / remove / rank ---------- */
@@ -4718,7 +4749,10 @@
             if (!isOrgAdmin()) { NotificationManager.show('Only admins can remove people.', 'error'); return; }
             var m = (window.appState.members || []).filter(function (x) { return x.uid === uid; })[0];
             if (!m) return;
-            if (m.role === 'headadmin') { NotificationManager.show('The Head Admin cannot be removed.', 'error'); return; }
+            if (m.role === 'headadmin' || m.uid === window.appState.ownerUserId) {
+                NotificationManager.show('The Head Admin cannot be removed.', 'error');
+                return;
+            }
             window.customConfirm('Remove member', 'Remove ' + (m.name || 'this person') + ' from this whiteboard?', async function () {
                 window.appState.members = window.appState.members.filter(function (x) { return x.uid !== uid; });
                 await saveAdminOrganisationData();
