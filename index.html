@@ -166,7 +166,7 @@
         /* ---------- a calmer, more minimal feel ---------- */
         .animate-pulse { animation: none !important; }
         [class*="shadow-sm"] { box-shadow: none !important; }
-        #panel-dashboard > div:first-child { background-image: none !important; background-color: rgb(var(--a-600)) !important; }
+        #panel-dashboard > div.bg-gradient-to-r { background-image: none !important; background-color: rgb(var(--a-600)) !important; }
         .min-flat { border-radius: 1rem; }
 
         /* segmented controls */
@@ -838,8 +838,29 @@
                 NotificationManager.show("Successfully running in Individual Sandbox Mode!", "success");
             } else {
                 window.pendingAction = journey;
-                showAuthenticationPanel();
+                if (window.appState.userId) {
+                    // already signed in - go straight to the form
+                    handleAuthenticatedTransition();
+                } else {
+                    showAuthenticationPanel();
+                }
             }
+        }
+
+        // Lets you pick a different Google account without leaving the flow.
+        async function switchCreationAccount() {
+            if (window.triggerSignOutFirebase) {
+                try { await window.triggerSignOutFirebase(); } catch (e) {}
+            }
+            window.appState.userId = null;
+            window.appState.userEmail = null;
+            window.appState.userDisplayName = null;
+            window.appState.userPhotoURL = null;
+            if (!window.pendingAction) window.pendingAction = 'create';
+            document.getElementById('org-details-form').classList.add('hidden');
+            document.getElementById('org-join-form').classList.add('hidden');
+            showAuthenticationPanel();
+            NotificationManager.show('Signed out. Choose the Google account you want to use.', 'info');
         }
 
         function showAuthenticationPanel() {
@@ -849,6 +870,8 @@
 
         function handleAuthenticatedTransition() {
             document.getElementById('auth-verification-panel').classList.add('hidden');
+            const who = window.appState.userEmail || window.appState.userDisplayName || 'your Google account';
+            document.querySelectorAll('.acc-name').forEach(function (el) { el.textContent = who; });
             
             if (window.pendingAction === 'create') {
                 document.getElementById('org-details-form').classList.remove('hidden');
@@ -1290,6 +1313,10 @@
             <!-- PANEL C: Create Organisation Detailed Parameters -->
             <div id="org-details-form" class="hidden space-y-4">
                 <h3 class="text-lg font-bold text-white text-center">Set up Classroom Organisation</h3>
+                <p class="text-[10px] text-slate-400 text-center">
+                    Signed in as <span class="acc-name text-white font-bold"></span> &middot;
+                    <button onclick="switchCreationAccount()" class="text-indigo-400 font-bold underline">use a different account</button>
+                </p>
                 <p class="text-xs text-slate-400 text-center leading-relaxed">Enter details below to host a public collaborative whiteboard document.</p>
                 
                 <div class="space-y-3 pt-2">
@@ -1328,6 +1355,10 @@
             <!-- PANEL D: Join Organisation Parameters -->
             <div id="org-join-form" class="hidden space-y-4">
                 <h3 class="text-lg font-bold text-white text-center">Join Existing Whiteboard</h3>
+                <p class="text-[10px] text-slate-400 text-center">
+                    Signed in as <span class="acc-name text-white font-bold"></span> &middot;
+                    <button onclick="switchCreationAccount()" class="text-indigo-400 font-bold underline">use a different account</button>
+                </p>
                 <p class="text-xs text-slate-400 text-center leading-relaxed">Input your nickname and classroom code to begin studying together.</p>
 
                 <div class="space-y-3 pt-2">
@@ -1513,6 +1544,9 @@
                                 <button data-mode="auto" onclick="setThemeMode('auto')" class="flex-1 text-[10px] font-bold py-1.5 rounded-lg transition-all flex items-center justify-center gap-1"><i class="fa-solid fa-circle-half-stroke"></i> Auto</button>
                             </div>
                             <div class="flex items-center justify-between gap-2">
+                                <button onclick="location.reload()" class="h-9 w-9 rounded-xl flex items-center justify-center text-slate-400 hover:text-indigo-500 transition-colors sb-card" title="Refresh the app">
+                                    <i class="fa-solid fa-rotate text-xs"></i>
+                                </button>
                                 <button onclick="openApiKeyModal()" class="admin-only-action h-9 w-9 rounded-xl flex items-center justify-center text-indigo-500 transition-colors relative sb-card" title="API Settings">
                                     <i class="fa-solid fa-key text-xs"></i>
                                     <span id="api-status-dot" class="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full border-2 border-white dark:border-slate-900 bg-rose-500"></span>
@@ -1552,6 +1586,20 @@
 
                     <!-- PANEL 1: DASHBOARD -->
                     <section id="panel-dashboard" class="tab-panel space-y-6">
+                        <!-- Search your work, or a date/festival to replay its celebration -->
+                        <div class="relative font-sans">
+                            <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/60 dark:border-slate-700/50 p-2.5 flex items-center gap-2">
+                                <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs ml-1.5 shrink-0"></i>
+                                <input id="event-search-input" type="text" autocomplete="off"
+                                       placeholder="Search tasks, notes, dates... or type Diwali / 15/8"
+                                       class="flex-1 min-w-0 bg-transparent text-xs font-semibold text-slate-700 dark:text-slate-200 outline-none"
+                                       oninput="runSearchLive()"
+                                       onfocus="runSearchLive()"
+                                       onkeydown="if (event.key === 'Enter') searchDateEvent()">
+                                <button onclick="searchDateEvent()" class="text-[10px] font-bold px-3 py-2 rounded-xl bg-indigo-600 text-white shrink-0">Search</button>
+                            </div>
+                            <div id="search-results" class="hidden absolute left-0 right-0 mt-2 z-30 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl overflow-hidden max-h-72 overflow-y-auto"></div>
+                        </div>
                         <!-- Welcoming Card -->
                         <div class="bg-gradient-to-r from-violet-600 via-indigo-600 to-indigo-700 text-white rounded-3xl p-6 md:p-8 shadow-xl relative overflow-hidden">
                             <div class="absolute -right-10 -bottom-10 opacity-15 transform rotate-12">
@@ -3662,6 +3710,10 @@
 
     <script>
         function renderApp() {
+            // never let a half-loaded workspace crash the screen
+            ['tasks', 'calendarEvents', 'notes', 'documents', 'presentations', 'members', 'resources', 'orgs', 'pending'].forEach(function (k) {
+                if (!Array.isArray(window.appState[k])) window.appState[k] = [];
+            });
             const activeCount = window.appState.tasks.filter(t => !t.completed).length;
             const taskBadge = document.getElementById('task-badge');
             if (taskBadge) {
@@ -3703,6 +3755,15 @@
             const iAmOwner = isHeadAdmin();
 
             badge.innerText = members.length + ' Member' + (members.length !== 1 ? 's' : '');
+
+            // No Head Admin yet? Let the current admin claim the role.
+            if (canManage && !members.some(function (m) { return m.role === 'headadmin'; })) {
+                const fix = document.createElement('div');
+                fix.className = 'col-span-full bg-amber-50/70 dark:bg-amber-500/10 border border-amber-300/60 dark:border-amber-500/30 p-3 rounded-xl flex items-center justify-between gap-3';
+                fix.innerHTML = '<p class="text-[11px] font-bold text-amber-700 dark:text-amber-400">This whiteboard has no Head Admin yet.</p>' +
+                    '<button onclick="claimHeadAdmin()" class="text-[10px] font-bold px-2.5 py-1.5 rounded-lg bg-amber-500 text-white shrink-0">Make me Head Admin</button>';
+                list.appendChild(fix);
+            }
 
             if (!members.length) {
                 list.innerHTML = '<div class="col-span-full text-center py-4 text-slate-400 text-xs font-medium">Loading members...</div>';
@@ -4283,6 +4344,7 @@
 
                 if (id === 'none' || (id === 'custom' && !custom)) {
                     el.style.backgroundImage = 'none';
+                    el.style.filter = 'none';
                     scrim.style.background = 'transparent';
                     return;
                 }
@@ -4295,6 +4357,14 @@
                     isDark = true;
                 }
 
+                var tone = localStorage.getItem('scholarbud_wall_tone') || 'dark';
+                if (tone === 'light') {
+                    el.style.filter = 'brightness(1.72) saturate(0.9)';
+                    isDark = false;
+                } else {
+                    el.style.filter = 'none';
+                }
+
                 html.classList.add('wall-on');
                 html.classList.add(isDark ? 'wall-light-text' : 'wall-dark-text');
                 scrim.style.background = isDark ? 'rgba(6,10,18,0.62)' : 'rgba(255,255,255,0.66)';
@@ -4304,6 +4374,12 @@
                 localStorage.setItem('scholarbud_wall', id);
                 this.apply(); this.render();
                 NotificationManager.show('Wallpaper changed.', 'success');
+            },
+
+            setTone: function (tone) {
+                localStorage.setItem('scholarbud_wall_tone', tone);
+                this.apply(); this.render();
+                NotificationManager.show('Wallpaper shade: ' + tone + '.', 'success');
             },
 
             upload: function (ev) {
@@ -4354,6 +4430,17 @@
                 up.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>';
                 up.onclick = function () { document.getElementById('wall-file-input').click(); };
                 host.appendChild(up);
+
+                var tone = localStorage.getItem('scholarbud_wall_tone') || 'dark';
+                [['dark', 'Dark shade', 'fa-moon'], ['light', 'Light shade', 'fa-sun']].forEach(function (tk) {
+                    var b = document.createElement('button');
+                    b.title = tk[1];
+                    b.className = 'h-8 w-8 rounded-lg flex items-center justify-center border ' +
+                        (tone === tk[0] ? 'border-indigo-500 ring-2 ring-indigo-500/30 text-indigo-500' : 'border-transparent text-slate-400') + ' sb-card';
+                    b.innerHTML = '<i class="fa-solid ' + tk[2] + ' text-[11px]"></i>';
+                    b.onclick = function () { self.setTone(tk[0]); };
+                    host.appendChild(b);
+                });
             }
         };
 
@@ -4726,6 +4813,19 @@
             try { await saveAdminOrganisationData(); } catch (e) { console.warn('rank repair failed', e); }
         }
 
+        // Emergency repair: if a whiteboard has no Head Admin at all (older ones
+        // saved the creator as a plain admin), the current admin can claim it.
+        async function claimHeadAdmin() {
+            var rec = myMemberRecord();
+            if (!rec) { NotificationManager.show('Your member entry is still loading. Try again in a second.', 'error'); return; }
+            rec.role = 'headadmin';
+            window.appState.ownerUserId = window.appState.userId;
+            try { await saveAdminOrganisationData(); } catch (e) {}
+            renderClassroomDirectory();
+            configureUserInterfacePrivileges();
+            NotificationManager.show('Done - you are now the Head Admin of this whiteboard.', 'success');
+        }
+
         /* ---------- approve / reject / remove / rank ---------- */
         async function approveMember(uid) {
             var p = (window.appState.pending || []).filter(function (x) { return x.uid === uid; })[0];
@@ -4956,37 +5056,87 @@
             }, 0);
         }
 
-        /* ---------- Festival easter eggs ---------- */
+        /* ---------- Celebrations: every event gets its own look ---------- */
         window.EasterEgg = (function () {
-            var FIXED = [
-                { id: 'newyear',      month: 1,  day: 1,  emoji: '🎉', title: 'Happy New Year!',           mode: 'confetti',   colors: ['#fbbf24', '#60a5fa', '#f472b6', '#34d399', '#f8fafc'] },
-                { id: 'sankranti',    month: 1,  day: 14, emoji: '🪁', title: 'Happy Makar Sankranti!',    mode: 'kites',      colors: ['#f97316', '#facc15', '#38bdf8', '#f472b6', '#22c55e'] },
-                { id: 'republic',     month: 1,  day: 26, emoji: '🇮🇳', title: 'Happy Republic Day!',       mode: 'tricolour',  colors: ['#FF9933', '#FFFFFF', '#138808'] },
-                { id: 'independence', month: 8,  day: 15, emoji: '🇮🇳', title: 'Happy Independence Day!',   mode: 'tricolour',  colors: ['#FF9933', '#FFFFFF', '#138808'] },
-                { id: 'gandhi',       month: 10, day: 2,  emoji: '🕊️', title: 'Gandhi Jayanti',            mode: 'tricolour',  colors: ['#FF9933', '#FFFFFF', '#138808'] },
-                { id: 'christmas',    month: 12, day: 25, emoji: '🎄', title: 'Merry Christmas!',          mode: 'confetti',   colors: ['#dc2626', '#16a34a', '#f8fafc', '#fbbf24'] }
-            ];
-            // Lunar festivals move each year - add future years here.
-            var LUNAR = [
-                { id: 'holi',   emoji: '🎨', title: 'Happy Holi!',   mode: 'splash',    colors: ['#e11d48', '#f59e0b', '#22c55e', '#3b82f6', '#a855f7', '#ec4899'], dates: { 2025: [3, 14], 2026: [3, 4], 2027: [3, 22], 2028: [3, 11] } },
-                { id: 'diwali', emoji: '🪔', title: 'Happy Diwali!', mode: 'fireworks', colors: ['#f59e0b', '#fbbf24', '#fb7185', '#a78bfa', '#34d399'], dates: { 2025: [10, 20], 2026: [11, 8], 2027: [10, 29], 2028: [10, 17] } }
+
+            // month/day = same date every year.
+            // lunar = a year table, with a default date so it still fires in any year.
+            var EVENTS = [
+                { id: 'newyear',     name: 'New Year',            aliases: ['new year', 'newyear', 'naya saal'], month: 1,  day: 1,  emoji: '🎉', title: 'Happy New Year!',          mode: 'confetti', colors: ['#fbbf24', '#f59e0b', '#fef3c7', '#60a5fa', '#f472b6'] },
+                { id: 'lohri',       name: 'Lohri',               aliases: ['lohri'],                            month: 1,  day: 13, emoji: '🔥', title: 'Happy Lohri!',             mode: 'sparks',   colors: ['#f97316', '#fbbf24', '#ef4444'] },
+                { id: 'sankranti',   name: 'Makar Sankranti',     aliases: ['sankranti', 'makar', 'pongal', 'kite'], month: 1, day: 14, emoji: '🪁', title: 'Happy Makar Sankranti!', mode: 'kites', colors: ['#f97316', '#facc15', '#38bdf8', '#f472b6', '#22c55e'] },
+                { id: 'republic',    name: 'Republic Day',        aliases: ['republic', 'ganatantra'],           month: 1,  day: 26, emoji: '🇮🇳', title: 'Happy Republic Day!',      mode: 'flagwave', colors: ['#FF9933', '#FFFFFF', '#138808'] },
+                { id: 'womensday',   name: "Women's Day",         aliases: ["women's day", 'womens day', 'women'], month: 3, day: 8, emoji: '💜', title: "Happy Women's Day!",       mode: 'ribbons',  colors: ['#a855f7', '#d946ef', '#f0abfc', '#7c3aed'] },
+                { id: 'holi',        name: 'Holi',                aliases: ['holi', 'rang'],                     lunar: true, default: [3, 14],  dates: { 2025: [3, 14], 2026: [3, 4], 2027: [3, 22], 2028: [3, 11] }, emoji: '🎨', title: 'Happy Holi!', mode: 'splash', colors: ['#e11d48', '#f59e0b', '#22c55e', '#3b82f6', '#a855f7', '#ec4899'] },
+                { id: 'baisakhi',    name: 'Baisakhi',            aliases: ['baisakhi', 'vaisakhi'],             month: 4,  day: 13, emoji: '🌾', title: 'Happy Baisakhi!',          mode: 'harvest',  colors: ['#f59e0b', '#fbbf24', '#d97706', '#fde68a'] },
+                { id: 'environment', name: 'Environment Day',     aliases: ['environment', 'nature'],            month: 6,  day: 5,  emoji: '🌿', title: 'Happy Environment Day!',   mode: 'leaves',   colors: ['#22c55e', '#16a34a', '#86efac', '#4ade80'] },
+                { id: 'yoga',        name: 'Yoga Day',            aliases: ['yoga'],                             month: 6,  day: 21, emoji: '🧘', title: 'Happy Yoga Day!',          mode: 'rings',    colors: ['#34d399', '#6ee7b7', '#a7f3d0'] },
+                { id: 'independence',name: 'Independence Day',    aliases: ['independence', 'azadi', 'swatantrata'], month: 8, day: 15, emoji: '🇮🇳', title: 'Happy Independence Day!', mode: 'chakra', colors: ['#FF9933', '#FFFFFF', '#138808'] },
+                { id: 'teachers',    name: "Teachers' Day",       aliases: ['teachers day', 'teacher'],          month: 9,  day: 5,  emoji: '📚', title: "Happy Teachers' Day!",     mode: 'pencils',  colors: ['#f59e0b', '#fb923c', '#fbbf24', '#fcd34d'] },
+                { id: 'gandhi',      name: 'Gandhi Jayanti',      aliases: ['gandhi'],                           month: 10, day: 2,  emoji: '🕊️', title: 'Gandhi Jayanti',           mode: 'petals',   colors: ['#f8fafc', '#e2e8f0', '#ffffff'] },
+                { id: 'diwali',      name: 'Diwali',              aliases: ['diwali', 'deepavali', 'deepawali'], lunar: true, default: [11, 12], dates: { 2025: [10, 20], 2026: [11, 8], 2027: [10, 29], 2028: [10, 17] }, emoji: '🪔', title: 'Happy Diwali!', mode: 'fireworks', colors: ['#f59e0b', '#fbbf24', '#fb7185', '#a78bfa', '#34d399'] },
+                { id: 'childrens',   name: "Children's Day",      aliases: ["children's day", 'childrens day', 'children'], month: 11, day: 14, emoji: '🎈', title: "Happy Children's Day!", mode: 'balloons', colors: ['#f472b6', '#38bdf8', '#fbbf24', '#34d399', '#a78bfa'] },
+                { id: 'christmas',   name: 'Christmas',           aliases: ['christmas', 'xmas'],                month: 12, day: 25, emoji: '🎄', title: 'Merry Christmas!',         mode: 'snow',     colors: ['#ffffff', '#e2e8f0', '#dc2626', '#16a34a'] },
+                { id: 'rakhi',       name: 'Raksha Bandhan',      aliases: ['rakhi', 'raksha bandhan'],          lunar: true, default: [8, 9],   dates: { 2026: [8, 28], 2027: [8, 17] }, emoji: '🧵', title: 'Happy Raksha Bandhan!', mode: 'threads', colors: ['#e11d48', '#f59e0b', '#fbbf24', '#a855f7'] },
+                { id: 'janmashtami', name: 'Janmashtami',         aliases: ['janmashtami', 'krishna'],           lunar: true, default: [8, 16],  dates: { 2026: [9, 4], 2027: [8, 25] }, emoji: '🪈', title: 'Happy Janmashtami!', mode: 'stars', colors: ['#60a5fa', '#a78bfa', '#fbbf24'] },
+                { id: 'ganesh',      name: 'Ganesh Chaturthi',    aliases: ['ganesh', 'chaturthi'],              lunar: true, default: [9, 14],  dates: { 2026: [9, 14], 2027: [9, 4] }, emoji: '🐘', title: 'Happy Ganesh Chaturthi!', mode: 'modaks', colors: ['#f97316', '#fbbf24', '#ef4444'] },
+                { id: 'navratri',    name: 'Navratri',            aliases: ['navratri', 'durga', 'garba'],       lunar: true, default: [10, 12], dates: { 2026: [10, 11], 2027: [9, 30] }, emoji: '💃', title: 'Happy Navratri!', mode: 'garba', colors: ['#e11d48', '#f59e0b', '#22c55e', '#3b82f6', '#a855f7'] },
+                { id: 'eid',         name: 'Eid',                 aliases: ['eid', 'eid ul fitr'],               lunar: true, default: [3, 31],  dates: { 2026: [3, 20], 2027: [3, 10] }, emoji: '🌙', title: 'Eid Mubarak!', mode: 'crescent', colors: ['#fbbf24', '#fef3c7', '#a7f3d0', '#ffffff'] }
             ];
 
-            var cvs = null, ctx = null, parts = [], raf = null, running = false, mode = 'confetti', colors = [], burstTimer = null;
+            var cvs = null, ctx = null, parts = [], raf = null, running = false;
+            var curMode = 'confetti', curColors = [], burstTimer = null, spin = 0;
 
-            function findToday() {
-                var now = new Date(), m = now.getMonth() + 1, d = now.getDate(), y = now.getFullYear();
-                for (var i = 0; i < FIXED.length; i++) if (FIXED[i].month === m && FIXED[i].day === d) return FIXED[i];
-                for (var j = 0; j < LUNAR.length; j++) {
-                    var dt = LUNAR[j].dates[y];
-                    if (dt && dt[0] === m && dt[1] === d) return LUNAR[j];
+            function dateOf(ev, y) {
+                if (ev.month) return [ev.month, ev.day];
+                var dt = (ev.dates || {})[y];
+                if (dt) return dt;
+                return ev.default || null;
+            }
+            function findByDate(m, d, y) {
+                for (var i = 0; i < EVENTS.length; i++) {
+                    var ev = EVENTS[i];
+                    if (ev.month) {
+                        if (ev.month === m && ev.day === d) return ev;
+                        continue;
+                    }
+                    // the exact date for that year, if we know it
+                    var dt = (ev.dates || {})[y];
+                    if (dt && dt[0] === m && dt[1] === d) return ev;
+                    // ...and the plain month/day so it keeps working every year
+                    var df = ev.default;
+                    if (df && df[0] === m && df[1] === d) return ev;
                 }
                 return null;
             }
             function findById(id) {
-                return FIXED.concat(LUNAR).filter(function (e) { return e.id === id; })[0] || null;
+                for (var i = 0; i < EVENTS.length; i++) if (EVENTS[i].id === id) return EVENTS[i];
+                return null;
             }
-            function key(e) { var n = new Date(); return 'scholarbud_egg_' + e.id + '_' + n.getFullYear() + '-' + (n.getMonth() + 1) + '-' + n.getDate(); }
+            function findByName(text) {
+                var s = String(text || '').toLowerCase().trim();
+                if (!s) return null;
+                for (var i = 0; i < EVENTS.length; i++) {
+                    var e = EVENTS[i];
+                    if (s === e.name.toLowerCase() || s === e.id) return e;
+                    var al = e.aliases || [];
+                    for (var j = 0; j < al.length; j++) if (s.indexOf(al[j]) !== -1) return e;
+                    // typing the beginning of a name is enough ("diwa", "indep", "teach")
+                    if (s.length >= 4 && (e.name.toLowerCase().indexOf(s) === 0 || e.id.indexOf(s) === 0)) return e;
+                }
+                return null;
+            }
+            function findToday() {
+                var n = new Date();
+                return findByDate(n.getMonth() + 1, n.getDate(), n.getFullYear());
+            }
+            function key(e) {
+                var n = new Date();
+                return 'scholarbud_egg_' + e.id + '_' + n.getFullYear() + '-' + (n.getMonth() + 1) + '-' + n.getDate();
+            }
+
+            function rand(a, b) { return a + Math.random() * (b - a); }
+            function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
             function ensureCanvas() {
                 cvs = document.getElementById('egg-canvas');
@@ -4996,72 +5146,255 @@
                 cvs.classList.add('on');
                 return true;
             }
-            function rand(a, b) { return a + Math.random() * (b - a); }
-            function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+            // Each mode gets its own shape + motion so no two events look alike.
+            var SHAPE = {
+                confetti: 'rect', flagwave: 'flag', chakra: 'rect', fireworks: 'dot',
+                splash: 'circle', kites: 'diamond', snow: 'snow', petals: 'petal',
+                balloons: 'balloon', ribbons: 'ribbon', pencils: 'pencil', threads: 'thread',
+                stars: 'star', modaks: 'modak', garba: 'circle', crescent: 'crescent',
+                sparks: 'dot', harvest: 'wheat', rings: 'ring', leaves: 'leaf'
+            };
 
             function makeParticle(burst) {
+                var W = window.innerWidth, H = window.innerHeight;
                 var x, y, vx, vy, size;
+                var mode = curMode;
+
                 if (mode === 'fireworks' && burst) {
-                    x = rand(window.innerWidth * .15, window.innerWidth * .85);
-                    y = rand(window.innerHeight * .15, window.innerHeight * .5);
-                    var ang = rand(0, Math.PI * 2), sp = rand(1.5, 5.5);
-                    vx = Math.cos(ang) * sp; vy = Math.sin(ang) * sp; size = rand(1.5, 3.4);
-                } else if (mode === 'kites') {
-                    x = rand(-80, window.innerWidth); y = window.innerHeight + rand(10, 200);
-                    vx = rand(-.5, .5); vy = rand(-1.3, -0.6); size = rand(8, 16);
+                    x = rand(W * .15, W * .85); y = rand(H * .12, H * .5);
+                    var ang = rand(0, Math.PI * 2), sp = rand(1.6, 5.6);
+                    vx = Math.cos(ang) * sp; vy = Math.sin(ang) * sp; size = rand(1.6, 3.4);
+                } else if (mode === 'sparks') {
+                    x = rand(W * .1, W * .9); y = H + rand(0, 120);
+                    vx = rand(-.4, .4); vy = rand(-3.2, -1.6); size = rand(1.5, 3.5);
+                } else if (mode === 'kites' || mode === 'balloons') {
+                    x = rand(-60, W); y = H + rand(10, 220);
+                    vx = rand(-.5, .5); vy = rand(-1.4, -0.6); size = rand(9, 17);
                 } else if (mode === 'splash') {
-                    x = rand(0, window.innerWidth); y = rand(-window.innerHeight, -10);
+                    x = rand(0, W); y = rand(-H, -10);
                     vx = rand(-.5, .5); vy = rand(1.2, 3.4); size = rand(14, 42);
+                } else if (mode === 'snow') {
+                    x = rand(0, W); y = rand(-H * .4, -10);
+                    vx = rand(-.5, .5); vy = rand(.6, 1.7); size = rand(3, 7);
+                } else if (mode === 'petals' || mode === 'leaves') {
+                    x = rand(0, W); y = rand(-H * .4, -10);
+                    vx = rand(-.7, .7); vy = rand(.8, 2); size = rand(7, 14);
+                } else if (mode === 'garba') {
+                    var a2 = rand(0, Math.PI * 2), r2 = rand(60, Math.min(W, H) * .42);
+                    x = W / 2 + Math.cos(a2) * r2; y = H / 2 + Math.sin(a2) * r2;
+                    vx = 0; vy = 0; size = rand(6, 13);
+                } else if (mode === 'crescent' || mode === 'stars') {
+                    x = rand(0, W); y = rand(0, H * .8);
+                    vx = rand(-.25, .25); vy = rand(-.15, .15); size = rand(6, 14);
                 } else {
-                    x = rand(0, window.innerWidth); y = rand(-window.innerHeight * .3, -10);
-                    vx = rand(-1.1, 1.1); vy = rand(1.4, 3.6); size = rand(5, 10);
+                    x = rand(0, W); y = rand(-H * .35, -10);
+                    vx = rand(-1.1, 1.1); vy = rand(1.4, 3.6); size = rand(6, 12);
                 }
-                return { x: x, y: y, vx: vx, vy: vy, size: size, color: pick(colors), rot: rand(0, 6.28), vr: rand(-.14, .14), life: 1 };
+
+                return {
+                    x: x, y: y, vx: vx, vy: vy, size: size, color: pick(curColors),
+                    rot: rand(0, 6.28), vr: rand(-.14, .14), life: 1,
+                    shape: SHAPE[mode] || 'rect', orbit: rand(0, 6.28)
+                };
             }
             function spawn(n, burst) { for (var i = 0; i < n; i++) parts.push(makeParticle(burst)); }
 
+            function drawShape(p) {
+                ctx.fillStyle = p.color;
+                ctx.strokeStyle = p.color;
+                var s = p.size;
+                switch (p.shape) {
+                    case 'circle':
+                        ctx.beginPath(); ctx.arc(0, 0, s, 0, 6.28); ctx.fill(); break;
+                    case 'dot':
+                        ctx.beginPath(); ctx.arc(0, 0, s * .8, 0, 6.28); ctx.fill(); break;
+                    case 'diamond':
+                        ctx.beginPath(); ctx.moveTo(0, -s); ctx.lineTo(s * .7, 0);
+                        ctx.lineTo(0, s); ctx.lineTo(-s * .7, 0); ctx.closePath(); ctx.fill(); break;
+                    case 'flag':
+                        ctx.fillRect(-s, -s * .5, s * 2, s * .34);
+                        ctx.fillStyle = '#ffffff'; ctx.fillRect(-s, -s * .16, s * 2, s * .32);
+                        ctx.fillStyle = '#138808'; ctx.fillRect(-s, s * .16, s * 2, s * .34); break;
+                    case 'snow':
+                        ctx.lineWidth = Math.max(1, s * .28);
+                        for (var k = 0; k < 3; k++) {
+                            var a = (Math.PI / 3) * k;
+                            ctx.beginPath();
+                            ctx.moveTo(-Math.cos(a) * s, -Math.sin(a) * s);
+                            ctx.lineTo(Math.cos(a) * s, Math.sin(a) * s);
+                            ctx.stroke();
+                        }
+                        break;
+                    case 'petal':
+                        ctx.beginPath(); ctx.ellipse(0, 0, s, s * .45, 0, 0, 6.28); ctx.fill(); break;
+                    case 'leaf':
+                        ctx.beginPath(); ctx.ellipse(0, 0, s, s * .42, Math.PI / 5, 0, 6.28); ctx.fill(); break;
+                    case 'balloon':
+                        ctx.beginPath(); ctx.ellipse(0, 0, s * .72, s, 0, 0, 6.28); ctx.fill();
+                        ctx.lineWidth = 1; ctx.beginPath();
+                        ctx.moveTo(0, s); ctx.lineTo(0, s + s * .8); ctx.stroke(); break;
+                    case 'ribbon':
+                        ctx.lineWidth = Math.max(2, s * .32); ctx.lineCap = 'round';
+                        ctx.beginPath(); ctx.moveTo(-s, s * .5);
+                        ctx.quadraticCurveTo(0, -s * .7, s, s * .5); ctx.stroke(); break;
+                    case 'thread':
+                        ctx.lineWidth = Math.max(1.5, s * .18);
+                        ctx.beginPath(); ctx.moveTo(-s, 0); ctx.lineTo(s, 0); ctx.stroke();
+                        ctx.beginPath(); ctx.arc(0, 0, s * .3, 0, 6.28); ctx.fill(); break;
+                    case 'pencil':
+                        ctx.fillRect(-s * .22, -s, s * .44, s * 1.5);
+                        ctx.beginPath(); ctx.moveTo(-s * .22, s * .5);
+                        ctx.lineTo(s * .22, s * .5); ctx.lineTo(0, s); ctx.closePath(); ctx.fill(); break;
+                    case 'star':
+                        ctx.beginPath();
+                        for (var i2 = 0; i2 < 5; i2++) {
+                            var o = (Math.PI * 2 / 5) * i2 - Math.PI / 2;
+                            var inr = (Math.PI * 2 / 5) * (i2 + .5) - Math.PI / 2;
+                            ctx.lineTo(Math.cos(o) * s, Math.sin(o) * s);
+                            ctx.lineTo(Math.cos(inr) * s * .45, Math.sin(inr) * s * .45);
+                        }
+                        ctx.closePath(); ctx.fill(); break;
+                    case 'modak':
+                        ctx.beginPath(); ctx.arc(0, s * .25, s * .8, 0, 6.28); ctx.fill();
+                        ctx.beginPath(); ctx.moveTo(-s * .35, -s * .3);
+                        ctx.lineTo(0, -s * .95); ctx.lineTo(s * .35, -s * .3);
+                        ctx.closePath(); ctx.fill(); break;
+                    case 'crescent':
+                        ctx.beginPath(); ctx.arc(0, 0, s, 0, 6.28); ctx.fill();
+                        ctx.globalCompositeOperation = 'destination-out';
+                        ctx.beginPath(); ctx.arc(s * .5, -s * .18, s * .82, 0, 6.28); ctx.fill();
+                        ctx.globalCompositeOperation = 'source-over'; break;
+                    case 'wheat':
+                        ctx.lineWidth = Math.max(1, s * .16);
+                        ctx.beginPath(); ctx.moveTo(0, s); ctx.lineTo(0, -s); ctx.stroke();
+                        for (var w = -2; w <= 2; w++) {
+                            ctx.beginPath(); ctx.ellipse(w * s * .18, -s * .5 + Math.abs(w) * s * .2, s * .16, s * .3, w * .4, 0, 6.28); ctx.fill();
+                        }
+                        break;
+                    case 'ring':
+                        ctx.lineWidth = Math.max(1.5, s * .12);
+                        ctx.beginPath(); ctx.arc(0, 0, s, 0, 6.28); ctx.stroke(); break;
+                    default:
+                        ctx.fillRect(-s / 2, -s / 3, s, s * .62);
+                }
+            }
+
+            function drawChakraOverlay() {
+                var cx = cvs.width / 2, cy = cvs.height * 0.34, r = Math.min(cvs.width, cvs.height) * 0.16;
+                ctx.save();
+                ctx.globalAlpha = 0.22;
+                ctx.translate(cx, cy);
+                ctx.rotate(spin);
+                ctx.strokeStyle = '#0b1f5c';
+                ctx.lineWidth = Math.max(2, r * 0.05);
+                ctx.beginPath(); ctx.arc(0, 0, r, 0, 6.28); ctx.stroke();
+                for (var i = 0; i < 24; i++) {
+                    var a = (Math.PI * 2 / 24) * i;
+                    ctx.beginPath();
+                    ctx.moveTo(0, 0);
+                    ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+                    ctx.stroke();
+                }
+                ctx.beginPath(); ctx.arc(0, 0, r * 0.14, 0, 6.28); ctx.fillStyle = '#0b1f5c'; ctx.fill();
+                ctx.restore();
+            }
+
             function draw() {
                 ctx.clearRect(0, 0, cvs.width, cvs.height);
-                var g = (mode === 'fireworks') ? 0.028 : (mode === 'splash' ? 0.02 : 0.035);
-                parts = parts.filter(function (p) { return p.y < cvs.height + 90 && p.life > 0; });
+                spin += 0.012;
+
+                var g = 0.035;
+                if (curMode === 'fireworks') g = 0.028;
+                if (curMode === 'splash') g = 0.02;
+                if (curMode === 'snow' || curMode === 'petals' || curMode === 'leaves') g = 0.006;
+                if (curMode === 'sparks') g = -0.004;
+
+                parts = parts.filter(function (p) {
+                    return p.y > -140 && p.y < cvs.height + 160 && p.life > 0;
+                });
+
                 parts.forEach(function (p) {
                     p.x += p.vx; p.y += p.vy; p.vy += g; p.rot += p.vr;
-                    if (mode === 'fireworks') p.life -= 0.011;
-                    ctx.save();
-                    ctx.globalAlpha = mode === 'fireworks' ? Math.max(p.life, 0) : 0.95;
-                    ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillStyle = p.color;
-                    if (mode === 'kites') {
-                        ctx.beginPath(); ctx.moveTo(0, -p.size); ctx.lineTo(p.size * .7, 0);
-                        ctx.lineTo(0, p.size); ctx.lineTo(-p.size * .7, 0); ctx.closePath(); ctx.fill();
-                    } else if (mode === 'splash') {
-                        ctx.beginPath(); ctx.arc(0, 0, p.size, 0, 6.28); ctx.fill();
-                    } else {
-                        ctx.fillRect(-p.size / 2, -p.size / 3, p.size, p.size * 0.62);
+
+                    if (curMode === 'garba') {
+                        p.orbit += 0.03;
+                        p.x += Math.cos(p.orbit) * 1.4;
+                        p.y += Math.sin(p.orbit) * 1.4;
                     }
+                    if (curMode === 'snow' || curMode === 'petals' || curMode === 'leaves' || curMode === 'balloons' || curMode === 'kites') {
+                        p.x += Math.sin(p.y / 60) * 0.5;
+                    }
+                    if (curMode === 'fireworks') p.life -= 0.011;
+                    if (curMode === 'sparks') p.life -= 0.008;
+
+                    ctx.save();
+                    ctx.globalAlpha = (curMode === 'fireworks' || curMode === 'sparks')
+                        ? Math.max(p.life, 0)
+                        : (curMode === 'crescent' || curMode === 'stars' ? 0.9 : 0.95);
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate(p.rot);
+                    drawShape(p);
                     ctx.restore();
                 });
-                if (mode === 'confetti' || mode === 'tricolour' || mode === 'splash') { if (parts.length < 150) spawn(3); }
-                if (mode === 'kites' && parts.length < 22) spawn(1);
+
+                if (curMode === 'chakra') drawChakraOverlay();
+
+                // keep the screen alive
+                if (curMode === 'confetti' || curMode === 'splash' || curMode === 'flagwave' || curMode === 'chakra') {
+                    if (parts.length < 150) spawn(3);
+                } else if (curMode === 'kites' || curMode === 'balloons') {
+                    if (parts.length < 20) spawn(1);
+                } else if (curMode === 'snow') {
+                    if (parts.length < 120) spawn(2);
+                } else if (curMode === 'petals' || curMode === 'leaves' || curMode === 'harvest') {
+                    if (parts.length < 70) spawn(2);
+                } else if (curMode === 'sparks') {
+                    if (parts.length < 90) spawn(2);
+                } else if (curMode === 'ribbons' || curMode === 'pencils' || curMode === 'threads' || curMode === 'modaks') {
+                    if (parts.length < 60) spawn(2);
+                } else if (curMode === 'garba' || curMode === 'crescent' || curMode === 'stars') {
+                    if (parts.length < 34) spawn(1);
+                } else if (curMode === 'rings') {
+                    if (parts.length < 12) spawn(1);
+                }
+
                 if (running) raf = requestAnimationFrame(draw);
             }
-            function start(m, cols) {
+
+            function start(mode, cols) {
                 if (!ensureCanvas()) return;
-                mode = m || 'confetti'; colors = cols && cols.length ? cols : ['#f59e0b', '#38bdf8', '#f472b6'];
-                parts = []; running = true;
-                if (mode === 'fireworks') { spawn(70, true); burstTimer = setInterval(function () { spawn(60, true); }, 700); }
-                else if (mode === 'tricolour') { spawn(160); }
-                else { spawn(120); }
+                curMode = mode || 'confetti';
+                curColors = (cols && cols.length) ? cols : ['#f59e0b', '#38bdf8', '#f472b6'];
+                parts = []; running = true; spin = 0;
+
+                if (curMode === 'fireworks') {
+                    spawn(70, true);
+                    burstTimer = setInterval(function () { spawn(60, true); }, 700);
+                } else if (curMode === 'chakra' || curMode === 'flagwave') {
+                    spawn(150);
+                } else if (curMode === 'garba' || curMode === 'rings') {
+                    spawn(18);
+                } else {
+                    spawn(110);
+                }
+
                 if (raf) cancelAnimationFrame(raf);
                 draw();
                 setTimeout(function () { stop(); }, 9000);
             }
+
             function stop() {
                 running = false;
                 if (raf) cancelAnimationFrame(raf);
                 if (burstTimer) clearInterval(burstTimer);
                 burstTimer = null;
-                setTimeout(function () { parts = []; if (cvs) { ctx && ctx.clearRect(0, 0, cvs.width, cvs.height); cvs.classList.remove('on'); } }, 900);
+                setTimeout(function () {
+                    parts = [];
+                    if (cvs && ctx) { ctx.clearRect(0, 0, cvs.width, cvs.height); cvs.classList.remove('on'); }
+                }, 900);
             }
+
             function showToast(e) {
                 var t = document.getElementById('egg-toast');
                 if (!t) return;
@@ -5069,6 +5402,7 @@
                 document.getElementById('egg-text').textContent = e.title || 'Celebrating today!';
                 t.classList.add('show');
             }
+
             function dismiss() {
                 var e = window.EasterEgg._current;
                 if (e) localStorage.setItem(key(e), '1');
@@ -5076,6 +5410,7 @@
                 if (t) t.classList.remove('show');
                 stop();
             }
+
             function run() {
                 var e = findToday();
                 if (!e) return;
@@ -5084,15 +5419,193 @@
                 showToast(e);
                 start(e.mode, e.colors);
             }
+
             function preview(id) {
-                var e = findById(id) || FIXED[0];
+                var e = findById(id) || EVENTS[0];
                 window.EasterEgg._current = e;
                 showToast(e);
                 start(e.mode, e.colors);
             }
-            window.addEventListener('resize', function () { if (cvs) { cvs.width = window.innerWidth; cvs.height = window.innerHeight; } });
-            return { run: run, preview: preview, dismiss: dismiss, stop: stop };
+
+            window.addEventListener('resize', function () {
+                if (cvs) { cvs.width = window.innerWidth; cvs.height = window.innerHeight; }
+            });
+
+            return {
+                run: run, preview: preview, dismiss: dismiss, stop: stop,
+                findByDate: findByDate, findByName: findByName, findById: findById,
+                list: function () { return EVENTS.slice(); }
+            };
         })();
+
+        /* ---------- reading a date out of whatever was typed ---------- */
+        function parseDateFromText(str) {
+            var s = (str || '').toLowerCase().trim();
+            if (!s) return null;
+            var months = {
+                jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+                may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8,
+                sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11,
+                dec: 12, december: 12
+            };
+            var m, y;
+
+            m = s.match(/(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+            if (m) return { y: +m[1], m: +m[2], d: +m[3] };
+
+            m = s.match(/(\d{1,2})[-\/.](\d{1,2})(?:[-\/.](\d{2,4}))?/);
+            if (m) {
+                var d1 = +m[1], m1 = +m[2];
+                y = m[3] ? +m[3] : new Date().getFullYear();
+                if (y < 100) y += 2000;
+                if (m1 > 12 && d1 <= 12) { var tmp = d1; d1 = m1; m1 = tmp; }
+                return { y: y, m: m1, d: d1 };
+            }
+
+            m = s.match(/(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)/);
+            if (m && months[m[2]]) {
+                y = s.match(/(\d{4})/);
+                return { y: y ? +y[1] : new Date().getFullYear(), m: months[m[2]], d: +m[1] };
+            }
+
+            m = s.match(/([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?/);
+            if (m && months[m[1]]) {
+                y = s.match(/(\d{4})/);
+                return { y: y ? +y[1] : new Date().getFullYear(), m: months[m[1]], d: +m[2] };
+            }
+
+            return null;
+        }
+
+        /* ---------- searching inside the app ---------- */
+        window.AppSearch = {
+            run: function (q) {
+                var s = String(q || '').toLowerCase().trim();
+                if (!s) return [];
+                var A = window.appState || {};
+                var out = [];
+                var has = function (v) { return String(v || '').toLowerCase().indexOf(s) !== -1; };
+
+                (A.tasks || []).forEach(function (t) {
+                    if (has(t.text)) out.push({ icon: 'fa-list-check', label: t.text, tab: 'tasks', kind: 'Task' });
+                });
+                (A.calendarEvents || []).forEach(function (e) {
+                    if (has(e.title) || has(e.date)) out.push({ icon: 'fa-calendar-days', label: (e.title || '') + ' - ' + (e.date || ''), tab: 'calendar', kind: 'Date' });
+                });
+                (A.notes || []).forEach(function (n) {
+                    if (has(n.title) || has(n.content)) out.push({ icon: 'fa-note-sticky', label: n.title || 'Note', tab: 'workspace', sub: 'notes', kind: 'Note' });
+                });
+                (A.documents || []).forEach(function (d) {
+                    if (has(d.title) || has(d.content)) out.push({ icon: 'fa-file-invoice', label: d.title || 'Document', tab: 'workspace', sub: 'docs', kind: 'Document' });
+                });
+                (A.presentations || []).forEach(function (p) {
+                    if (has(p.title)) out.push({ icon: 'fa-presentation-screen', label: p.title || 'Deck', tab: 'workspace', sub: 'slides', kind: 'Slides' });
+                });
+                (A.resources || []).forEach(function (f) {
+                    if (has(f.name)) out.push({ icon: 'fa-paperclip', label: f.name || 'File', tab: 'workspace', sub: 'files', kind: 'File' });
+                });
+                (A.members || []).forEach(function (m) {
+                    if (has(m.name) || has(m.email)) out.push({ icon: 'fa-user', label: m.name || 'Member', tab: 'dashboard', kind: 'Member' });
+                });
+
+                return out.slice(0, 8);
+            },
+
+            hide: function () {
+                var box = document.getElementById('search-results');
+                if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+            },
+
+            show: function (results, ev) {
+                var box = document.getElementById('search-results');
+                if (!box) return;
+                if (!results.length && !ev) { this.hide(); return; }
+                box.innerHTML = '';
+                var self = this;
+
+                if (ev) {
+                    var playRow = document.createElement('button');
+                    playRow.className = 'w-full text-left px-3 py-2.5 flex items-center gap-2.5 bg-indigo-500/5 hover:bg-indigo-500/10 transition-colors border-b border-slate-100 dark:border-slate-700';
+                    playRow.innerHTML = '<span class="text-base leading-none">' + (ev.emoji || '\u2728') + '</span>' +
+                        '<span class="flex-1 min-w-0 text-[11px] font-bold truncate">Play the ' + window.escapeHtml(ev.name) + ' celebration</span>' +
+                        '<span class="text-[9px] font-bold text-indigo-500 uppercase shrink-0">Play</span>';
+                    playRow.onclick = function () { window.EasterEgg.preview(ev.id); self.hide(); };
+                    box.appendChild(playRow);
+                }
+
+                results.forEach(function (r) {
+                    var row = document.createElement('button');
+                    row.className = 'w-full text-left px-3 py-2.5 flex items-center gap-2.5 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors';
+                    row.innerHTML = '<i class="fa-solid ' + r.icon + ' text-slate-400 text-[11px] w-4 text-center"></i>' +
+                        '<span class="flex-1 min-w-0 text-[11px] font-semibold truncate">' + window.escapeHtml(r.label) + '</span>' +
+                        '<span class="text-[9px] font-bold text-slate-400 uppercase">' + r.kind + '</span>';
+                    row.onclick = function () { self.go(r); };
+                    box.appendChild(row);
+                });
+                box.classList.remove('hidden');
+            },
+
+            go: function (r) {
+                this.hide();
+                switchTab(r.tab);
+                if (r.sub && window.selectWorkspaceSub) selectWorkspaceSub(r.sub);
+            }
+        };
+
+        var __lastEgg = '';
+
+        function runSearchLive() {
+            var el = document.getElementById('event-search-input');
+            if (!el) return;
+            var q = el.value;
+
+            if (!q.trim()) { window.AppSearch.hide(); __lastEgg = ''; return; }
+
+            var ev = window.EasterEgg.findByName(q);
+            window.AppSearch.show(window.AppSearch.run(q), ev);
+
+            // Writing the name of the event is enough to play it - no Enter needed.
+            clearTimeout(window.__eggTypeTimer);
+            if (ev) {
+                window.__eggTypeTimer = setTimeout(function () {
+                    if (__lastEgg !== ev.id) {
+                        __lastEgg = ev.id;
+                        window.EasterEgg.preview(ev.id);
+                    }
+                }, 600);
+            }
+        }
+
+        // Enter or the Search button: a festival name/date plays the celebration,
+        // otherwise it opens the first matching item inside the app.
+        function searchDateEvent() {
+            var el = document.getElementById('event-search-input');
+            var raw = el ? el.value : '';
+            if (!raw.trim()) { NotificationManager.show('Type something to search, or a date like 15/8 or "Diwali".', 'info'); return; }
+
+            var byName = window.EasterEgg.findByName(raw);
+            if (byName) { window.EasterEgg.preview(byName.id); window.AppSearch.hide(); return; }
+
+            var p = parseDateFromText(raw);
+            if (p && p.m >= 1 && p.m <= 12 && p.d >= 1 && p.d <= 31) {
+                var egg = window.EasterEgg.findByDate(p.m, p.d, p.y);
+                if (egg) { window.EasterEgg.preview(egg.id); window.AppSearch.hide(); return; }
+            }
+
+            var results = window.AppSearch.run(raw);
+            if (results.length) { window.AppSearch.go(results[0]); return; }
+
+            NotificationManager.show('Nothing found for "' + raw + '". Try a task, note or date like 15/8.', 'error');
+        }
+
+        // close the search results when clicking elsewhere
+        document.addEventListener('click', function (e) {
+            var bar = document.getElementById('event-search-input');
+            var box = document.getElementById('search-results');
+            if (!bar || !box) return;
+            if (bar.contains(e.target) || box.contains(e.target)) return;
+            box.classList.add('hidden');
+        });
 
         // Start engine functions on complete window load
         window.onload = async function() {
