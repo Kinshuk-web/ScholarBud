@@ -4,9 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scholar Bud - Your Ultimate AI Study Workspace</title>
-    <link rel="icon" type="image/png" href="logo-small.png">
-    <link rel="shortcut icon" href="logo-small.png">
-    <link rel="apple-touch-icon" href="logo-small.png">
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -144,6 +141,39 @@
         #mobile-pill.pill-shrink { transform: translateX(-50%) scale(.84); opacity: .6; }
         /* hide the pill while the mobile sidebar drawer is open so it can't cover it */
         body.sb-drawer-open #mobile-pill { display: none !important; }
+        /* no strip of banner left above the open drawer */
+        body.sb-drawer-open #privilege-banner { display: none !important; }
+
+        /* loading screen */
+        #boot-splash-main { transition: opacity .45s ease; }
+        #boot-splash-main.is-hidden { opacity: 0; pointer-events: none; }
+        @keyframes bootBar {
+            0%   { transform: translateX(-110%); }
+            100% { transform: translateX(360%); }
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ---------- wallpaper ---------- */
+        #app-wallpaper { position: fixed; inset: 0; z-index: -2; background-size: cover; background-position: center; background-repeat: no-repeat; }
+        #app-wallpaper-scrim { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+        html.wall-on body { background-color: transparent !important; }
+        html.wall-on #current-tab-title, html.wall-on #current-date-string { text-shadow: 0 1px 2px rgba(0,0,0,.18); }
+        html.wall-on.wall-light-text #current-tab-title,
+        html.wall-on.wall-light-text #current-date-string { color: #f4f7ff !important; }
+        html.wall-on.wall-dark-text #current-tab-title,
+        html.wall-on.wall-dark-text #current-date-string { color: #14161a !important; }
+
+        /* ---------- a calmer, more minimal feel ---------- */
+        .animate-pulse { animation: none !important; }
+        [class*="shadow-sm"] { box-shadow: none !important; }
+        #panel-dashboard > div:first-child { background-image: none !important; background-color: rgb(var(--a-600)) !important; }
+        .min-flat { border-radius: 1rem; }
+
+        /* segmented controls */
+        .engine-seg { font-size: 10px; font-weight: 800; padding: 5px 11px; border-radius: 9999px; color: var(--sb-muted); transition: all .25s ease; letter-spacing: .01em; }
+        .engine-seg.active { background: rgb(var(--a-600)); color: #fff; box-shadow: 0 2px 8px -4px rgb(var(--a-600)); }
+        .rank-seg { font-size: 9px; font-weight: 800; padding: 3px 9px; border-radius: 9999px; color: var(--sb-muted); transition: all .2s ease; }
+        .rank-seg.active { background: rgb(var(--a-600)); color: #fff; }
 
         .pill-btn {
             display: flex; align-items: center; gap: .35rem;
@@ -183,6 +213,29 @@
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 dark:bg-slate-900 dark:text-slate-100 h-full flex flex-col transition-colors duration-200 overflow-hidden">
+
+    <div id="app-wallpaper"></div>
+    <div id="app-wallpaper-scrim"></div>
+
+    <!-- Loading screen shown while the workspace wakes up -->
+    <div id="boot-splash-main" class="fixed inset-0 flex flex-col items-center justify-center" style="z-index: 80; background-color: var(--sb-bg);">
+        <div class="h-16 w-16 rounded-2xl flex items-center justify-center text-white mb-5" style="background: linear-gradient(135deg, rgb(var(--a-500)), rgb(var(--a-800)));">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:30px;height:30px"><path d="M2 9.5 12 5l10 4.5-10 4.5L2 9.5z"/><path d="M6 11.5V16c0 1.7 2.7 3 6 3s6-1.3 6-3v-4.5"/><path d="M21 9.5V15"/></svg>
+        </div>
+        <h1 class="text-lg font-extrabold tracking-tight" style="color: var(--sb-text);">Scholar Bud</h1>
+        <p class="text-[11px] font-semibold mt-1" style="color: var(--sb-muted);">Getting your study space ready</p>
+        <div class="mt-6 h-1 w-40 rounded-full overflow-hidden" style="background-color: var(--sb-line);">
+            <div style="height:100%;width:38%;border-radius:9999px;background-color:rgb(var(--a-600));animation:bootBar 1.15s ease-in-out infinite;"></div>
+        </div>
+    </div>
+    <script>
+        setTimeout(function () {
+            var s = document.getElementById('boot-splash-main');
+            if (!s) return;
+            s.classList.add('is-hidden');
+            setTimeout(function () { if (s.parentNode) s.parentNode.removeChild(s); }, 520);
+        }, 3400);
+    </script>
 
     <script>
         /* ============================================================
@@ -483,13 +536,14 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Expose Firebase tools to the global window scope
         window.doc = doc;
         window.setDoc = setDoc;
         window.getDoc = getDoc;
         window.onSnapshot = onSnapshot;
+        window.deleteDoc = deleteDoc;
 
         // ==========================================================
         //  Firebase config now comes from config.js so credentials
@@ -847,7 +901,24 @@
             }
 
             const adminKeyInput = document.getElementById('create-org-apikey').value.trim();
-            const generatedCode = 'ORG-' + Math.floor(1000 + Math.random() * 9000);
+            // Long codes: 6 characters from a 32-letter alphabet = over a billion
+            // possible whiteboards, so 9999 is no longer a ceiling.
+            function makeOrgCode() {
+                const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+                let s = '';
+                for (let i = 0; i < 6; i++) s += chars.charAt(Math.floor(Math.random() * chars.length));
+                return 'ORG-' + s;
+            }
+            let generatedCode = makeOrgCode();
+            if (window.db) {
+                for (let attempt = 0; attempt < 5; attempt++) {
+                    try {
+                        const probe = await window.getDoc(window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'orgs', generatedCode));
+                        if (!probe.exists()) break;
+                    } catch (e) { break; }
+                    generatedCode = makeOrgCode();
+                }
+            }
 
             window.appState.userMode = 'admin';
             window.appState.orgCode = generatedCode;
@@ -1427,8 +1498,9 @@
                                 <i class="fa-solid fa-download"></i> Install app
                             </button>
                             <div class="mb-2">
-                                <p class="text-[10px] font-bold uppercase tracking-wider sb-muted mb-1.5">App logo</p>
-                                <div id="logo-picker" class="flex items-center gap-1.5 flex-wrap"></div>
+                                <p class="text-[10px] font-bold uppercase tracking-wider sb-muted mb-1.5">Wallpaper</p>
+                                <div id="wall-picker" class="flex items-center gap-1.5 flex-wrap"></div>
+                                <input type="file" id="wall-file-input" accept="image/*" class="hidden" onchange="Wallpaper.upload(event)">
                             </div>
                             <div id="theme-switch" class="flex items-center gap-1 p-1 rounded-xl sb-card mb-2">
                                 <button data-mode="light" onclick="setThemeMode('light')" class="flex-1 text-[10px] font-bold py-1.5 rounded-lg transition-all flex items-center justify-center gap-1"><i class="fa-solid fa-sun"></i> Light</button>
@@ -1743,10 +1815,16 @@
                                         </div>
                                     </div>
                                     <div class="flex items-center gap-2">
-                                        <label class="text-[9px] font-bold text-slate-400 uppercase hidden sm:block">Engine</label>
-                                        <select id="chatbot-model-select" onchange="onChatModelChange(this.value)" class="text-[11px] font-bold bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 border border-slate-200 dark:border-slate-600 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                                            <option>Loading…</option>
-                                        </select>
+                                        <div id="engine-switch" class="flex items-center gap-1.5">
+                                            <div class="inline-flex items-center rounded-full p-0.5 sb-card">
+                                                <button data-prov="gemini" onclick="setEngineProvider('gemini')" class="engine-seg">Gemini</button>
+                                                <button data-prov="sarvam" onclick="setEngineProvider('sarvam')" class="engine-seg">Sarvam</button>
+                                            </div>
+                                            <button id="engine-model" onclick="cycleEngineModel()" title="Change model" class="text-[9px] font-bold px-2.5 py-1.5 rounded-full sb-card flex items-center gap-1.5">
+                                                <span id="engine-model-label">Auto</span>
+                                                <i class="fa-solid fa-rotate text-[8px] opacity-50"></i>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -1970,8 +2048,8 @@
             
             <div id="quiz-question-container" class="space-y-4 font-sans">
                 <div class="flex items-center justify-between text-xs text-slate-400">
-                    <span id="quiz-progress-text font-mono">Question 1 of 5</span>
-                    <span id="quiz-score-text font-mono">Score: 0/0</span>
+                    <span id="quiz-progress-text" class="font-mono">Question 1 of 5</span>
+                    <span id="quiz-score-text" class="font-mono">Score: 0/0</span>
                 </div>
                 <h4 id="quiz-question-title" class="font-bold text-sm text-slate-800 dark:text-white">Loading question...</h4>
                 
@@ -2421,7 +2499,9 @@
             document.getElementById('chat-loading-indicator').classList.remove('hidden');
             
             try {
+                window.ChatMemory.add('user', query || 'I attached an image to look at.');
                 const responseText = await queryScholarBuddyAI(query || "Describe this attached diagram in detail.");
+                window.ChatMemory.add('bot', responseText);
                 appendChatBubble('bot', responseText);
             } catch (e) {
                 console.error("AI Generation Error: ", e);
@@ -2501,6 +2581,7 @@
             - ABSOLUTELY REFUSE to assist with non-academic questions (e.g. video games, celebrities, gossip, shopping, sports, jokes, creative fiction roleplays).
             - If a query is NOT academic or educational, politely state: "As your Scholar Buddy study partner, I must only assist you with studies, coding, general knowledge, or academic task creations! Let's find a study topic to research instead."
             - You cannot generate images.
+            - You remember the earlier part of this chat, so stay consistent with it and build on it.
             - Today's date is ${new Date().toISOString().slice(0, 10)} (use this when marking calendar dates).
 
             TOOL SYSTEM DESIGN:
@@ -2600,6 +2681,30 @@
                         }
                     },
                     {
+                        name: 'createQuiz',
+                        description: 'Builds an interactive multiple choice quiz the student can play right away.',
+                        parameters: {
+                            type: 'OBJECT',
+                            properties: {
+                                title: { type: 'STRING', description: 'Short quiz title' },
+                                questions: {
+                                    type: 'ARRAY',
+                                    items: {
+                                        type: 'OBJECT',
+                                        properties: {
+                                            question: { type: 'STRING' },
+                                            options: { type: 'ARRAY', items: { type: 'STRING' } },
+                                            answerIndex: { type: 'INTEGER', description: 'Which option is correct, starting at 0' },
+                                            explanation: { type: 'STRING' }
+                                        },
+                                        required: ['question', 'options', 'answerIndex', 'explanation']
+                                    }
+                                }
+                            },
+                            required: ['questions']
+                        }
+                    },
+                    {
                         name: 'addCalendarEvent',
                         description: 'Marks a date on the student calendar (exam, deadline, revision block).',
                         parameters: {
@@ -2627,7 +2732,7 @@
             userContentParts.push({ text: userQuery });
 
             const payload = {
-                contents: [{ role: "user", parts: userContentParts }],
+                contents: window.ChatMemory.contents().concat([{ role: "user", parts: userContentParts }]),
                 tools: tools,
                 systemInstruction: { parts: [{ text: systemInstruction }] }
             };
@@ -2732,6 +2837,26 @@
                 if (window.appState.userMode === 'admin') { await saveAdminOrganisationData(); } else { await TaskManager.saveTasks(); }
                 NotificationManager.show('Task added to your board.', 'success');
                 return `[Done] I added "${args.text}" to your tasks for today.`;
+            }
+
+            if (name === 'createQuiz') {
+                const qs = (args.questions || []).map(function (q) {
+                    return {
+                        question: q.question,
+                        options: q.options || [],
+                        answerIndex: q.answerIndex || 0,
+                        explanation: q.explanation || ''
+                    };
+                }).filter(function (q) { return q.question && q.options.length >= 2; });
+
+                if (!qs.length) return 'I could not build a quiz from that. Ask me again with the topic and how many questions you want.';
+
+                window.appState.activeQuizQuestions = qs;
+                window.appState.activeQuizIndex = 0;
+                window.appState.activeQuizScore = 0;
+                openQuizModal();
+                displayActiveQuizQuestion();
+                return '[Done] I made a ' + qs.length + '-question quiz. It is open on your screen now - tap an answer to begin.';
             }
 
             if (name === 'addCalendarEvent') {
@@ -3590,10 +3715,10 @@
                 let controls = '';
                 if (canManage && !isMe && role !== 'headadmin') {
                     if (iAmOwner) {
-                        controls += '<select data-role-for="' + m.uid + '" class="text-[9px] font-bold bg-transparent border border-slate-300 dark:border-slate-600 rounded-md px-1 py-0.5">' +
-                            '<option value="member"' + (role === 'member' ? ' selected' : '') + '>Member</option>' +
-                            '<option value="admin"' + (role === 'admin' ? ' selected' : '') + '>Admin</option>' +
-                            '</select>';
+                        controls += '<div class="inline-flex items-center rounded-full p-0.5 bg-slate-200/70 dark:bg-slate-700/70">' +
+                            '<button data-setrole="member" data-uid="' + m.uid + '" class="rank-seg' + (role === 'member' ? ' active' : '') + '">Member</button>' +
+                            '<button data-setrole="admin" data-uid="' + m.uid + '" class="rank-seg' + (role === 'admin' ? ' active' : '') + '">Admin</button>' +
+                            '</div>';
                     }
                     controls += '<button data-remove="' + m.uid + '" title="Remove" class="h-6 w-6 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-500/10"><i class="fa-solid fa-user-minus text-[10px]"></i></button>';
                 }
@@ -3640,7 +3765,12 @@
             list.querySelectorAll('[data-approve]').forEach(function (b) { b.onclick = function () { approveMember(b.getAttribute('data-approve')); }; });
             list.querySelectorAll('[data-reject]').forEach(function (b) { b.onclick = function () { rejectMember(b.getAttribute('data-reject')); }; });
             list.querySelectorAll('[data-remove]').forEach(function (b) { b.onclick = function () { removeMember(b.getAttribute('data-remove')); }; });
-            list.querySelectorAll('[data-role-for]').forEach(function (s) { s.onchange = function () { setMemberRole(s.getAttribute('data-role-for'), s.value); }; });
+            list.querySelectorAll('[data-setrole]').forEach(function (b) {
+                b.onclick = function (e) {
+                    e.stopPropagation();
+                    setMemberRole(b.getAttribute('data-uid'), b.getAttribute('data-setrole'));
+                };
+            });
         }
 
         function renderTasksList() {
@@ -3982,27 +4112,46 @@
             { id: 'sarvam|', label: 'Sarvam (default)' }
         ];
 
+        function shortModelName(provider, model) {
+            if (!model) return 'Auto';
+            if (provider === 'sarvam') return model.replace('sarvam-', '').toUpperCase();
+            return model.replace('gemini-', '').replace(/-/g, ' ').replace(/\bflash\b/i, 'Flash').replace(/\blite\b/i, 'Lite');
+        }
+
         function populateChatModelSelect() {
-            const sel = document.getElementById('chatbot-model-select');
-            if (!sel) return;
             const cur = window.SB.getChatState();
-            const curId = cur.provider + '|' + (cur.model || '');
-            sel.innerHTML = '';
-            CHAT_ENGINES.forEach(function (e) {
-                const o = document.createElement('option');
-                o.value = e.id;
-                o.textContent = e.label;
-                if (e.id === curId) o.selected = true;
-                sel.appendChild(o);
+            document.querySelectorAll('#engine-switch .engine-seg').forEach(function (b) {
+                b.classList.toggle('active', b.getAttribute('data-prov') === cur.provider);
             });
+            const lbl = document.getElementById('engine-model-label');
+            if (lbl) lbl.textContent = shortModelName(cur.provider, cur.model);
             updateChatProviderStatus();
         }
 
+        function setEngineProvider(prov) {
+            const cur = window.SB.getChatState();
+            window.SB.setChatModel(prov, cur.provider === prov ? cur.model : '');
+            populateChatModelSelect();
+            NotificationManager.show('Now using ' + (prov === 'sarvam' ? 'Sarvam' : 'Gemini') + '.', 'success');
+        }
+
+        function cycleEngineModel() {
+            const cur = window.SB.getChatState();
+            const list = CHAT_ENGINES.filter(function (e) { return e.id.split('|')[0] === cur.provider; });
+            if (!list.length) return;
+            const curId = cur.provider + '|' + (cur.model || '');
+            let i = list.map(function (e) { return e.id; }).indexOf(curId);
+            i = (i + 1) % list.length;
+            const parts = list[i].id.split('|');
+            window.SB.setChatModel(parts[0], parts[1] || '');
+            populateChatModelSelect();
+        }
+
+        // kept so older buttons still work
         function onChatModelChange(val) {
             const parts = String(val).split('|');
             window.SB.setChatModel(parts[0], parts[1] || '');
-            updateChatProviderStatus();
-            NotificationManager.show('Chat engine switched to ' + (parts[0] === 'sarvam' ? 'Sarvam' : 'Gemini') + '.', 'success');
+            populateChatModelSelect();
         }
 
         function updateChatProviderStatus() {
@@ -4017,6 +4166,189 @@
         }
 
 
+
+        /* ============================================================
+           Chat memory - so Scholar Buddy can follow the conversation.
+           It lives only in this browser tab and is never saved anywhere,
+           so it costs nothing and disappears when you close the page.
+           ============================================================ */
+        window.ChatMemory = {
+            turns: [],
+            MAX: 8,
+            add: function (role, text) {
+                if (!text) return;
+                this.turns.push({ role: role, text: String(text).slice(0, 700) });
+                while (this.turns.length > this.MAX) this.turns.shift();
+            },
+            contents: function () {
+                return this.turns.map(function (t) {
+                    return { role: t.role === 'bot' ? 'model' : 'user', parts: [{ text: t.text }] };
+                });
+            },
+            clear: function () { this.turns = []; }
+        };
+
+        /* ============================================================
+           Wallpapers - built-in artwork or your own picture.
+           The app reads how bright the picture is and flips the text
+           colour so it always stays readable.
+           ============================================================ */
+        window.Wallpaper = {
+            MARKS: {
+                cap: '<path d="M2 9.5 12 5l10 4.5-10 4.5L2 9.5z"/><path d="M6 11.5V16c0 1.7 2.7 3 6 3s6-1.3 6-3v-4.5"/><path d="M21 9.5V15"/>',
+                rocket: '<path d="M12 2c3 2.5 4.5 6 4.5 9.5 0 2-.7 3.8-1.8 5.2H9.3A8.7 8.7 0 0 1 7.5 11.5C7.5 8 9 4.5 12 2z"/><circle cx="12" cy="9" r="1.6"/><path d="M9.3 16.7 7 21l3-1.2M14.7 16.7 17 21l-3-1.2"/>',
+                bloom: '<circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="5.6" r="2.5"/><circle cx="12" cy="18.4" r="2.5"/><circle cx="5.6" cy="12" r="2.5"/><circle cx="18.4" cy="12" r="2.5"/><circle cx="7.5" cy="7.5" r="2.3"/><circle cx="16.5" cy="16.5" r="2.3"/><circle cx="16.5" cy="7.5" r="2.3"/><circle cx="7.5" cy="16.5" r="2.3"/>',
+                atom: '<circle cx="12" cy="12" r="2"/><ellipse cx="12" cy="12" rx="9" ry="4"/><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(120 12 12)"/>',
+                leaf: '<path d="M12 21c0-7 3-11 9-13-1 7-4 11-9 13z"/><path d="M12 21c0-6-2.5-9.5-8-11.5 1 6 3.5 9.5 8 11.5z"/>'
+            },
+            LIST: [
+                { id: 'none',   name: 'Plain' },
+                { id: 'cap',    name: 'Ember',    a: '#1a0a0c', b: '#8f2d2d', glow: '#ff8a80', mark: 'cap' },
+                { id: 'rocket', name: 'Deep Sea', a: '#06101d', b: '#123a63', glow: '#7dd3fc', mark: 'rocket' },
+                { id: 'bloom',  name: 'Orchid',   a: '#150a1d', b: '#552a7a', glow: '#d8b4fe', mark: 'bloom' },
+                { id: 'atom',   name: 'Jade',     a: '#06130f', b: '#0f5741', glow: '#6ee7b7', mark: 'atom' },
+                { id: 'leaf',   name: 'Sunset',   a: '#1b0d07', b: '#a1431a', glow: '#fdba74', mark: 'leaf' }
+            ],
+
+            artCss: function (w) {
+                var mark = this.MARKS[w.mark] || this.MARKS.cap;
+                var glow = w.glow || '#ffffff';
+                var svg =
+                    '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="2000" viewBox="0 0 1200 2000">' +
+                    '<defs>' +
+                    '<linearGradient id="g" x1="0" y1="0" x2="0.65" y2="1">' +
+                    '<stop offset="0" stop-color="' + w.a + '"/><stop offset="1" stop-color="' + w.b + '"/>' +
+                    '</linearGradient>' +
+                    '<radialGradient id="h" cx="50%" cy="28%" r="78%">' +
+                    '<stop offset="0" stop-color="' + glow + '" stop-opacity="0.26"/>' +
+                    '<stop offset="1" stop-color="' + glow + '" stop-opacity="0"/>' +
+                    '</radialGradient>' +
+                    '<radialGradient id="v" cx="50%" cy="50%" r="72%">' +
+                    '<stop offset="0.5" stop-color="#000000" stop-opacity="0"/>' +
+                    '<stop offset="1" stop-color="#000000" stop-opacity="0.45"/>' +
+                    '</radialGradient>' +
+                    '</defs>' +
+                    '<rect width="1200" height="2000" fill="url(#g)"/>' +
+                    '<rect width="1200" height="2000" fill="url(#h)"/>' +
+                    '<circle cx="210" cy="380" r="330" fill="' + glow + '" opacity="0.07"/>' +
+                    '<circle cx="1030" cy="820" r="400" fill="' + glow + '" opacity="0.05"/>' +
+                    '<circle cx="300" cy="1620" r="470" fill="' + glow + '" opacity="0.05"/>' +
+                    '<circle cx="600" cy="960" r="520" fill="none" stroke="' + glow + '" stroke-opacity="0.10" stroke-width="1.5"/>' +
+                    '<circle cx="600" cy="960" r="640" fill="none" stroke="' + glow + '" stroke-opacity="0.06" stroke-width="1"/>' +
+                    '<g transform="translate(600,960) scale(34)" fill="none" stroke="' + glow + '" stroke-opacity="0.24" stroke-width="0.05" stroke-linecap="round" stroke-linejoin="round">' + mark + '</g>' +
+                    '<g transform="translate(600,1560) scale(12)" fill="none" stroke="' + glow + '" stroke-opacity="0.11" stroke-width="0.085" stroke-linecap="round" stroke-linejoin="round">' + mark + '</g>' +
+                    '<rect width="1200" height="2000" fill="url(#v)"/>' +
+                    '</svg>';
+                return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")';
+            },
+
+            brightnessOf: function (dataUrl, cb) {
+                var img = new Image();
+                img.onload = function () {
+                    try {
+                        var c = document.createElement('canvas');
+                        c.width = 24; c.height = 24;
+                        var x = c.getContext('2d');
+                        x.drawImage(img, 0, 0, 24, 24);
+                        var d = x.getImageData(0, 0, 24, 24).data;
+                        var sum = 0, n = 0;
+                        for (var i = 0; i < d.length; i += 4) {
+                            sum += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255; n++;
+                        }
+                        cb(sum / n);
+                    } catch (e) { cb(0.2); }
+                };
+                img.onerror = function () { cb(0.2); };
+                img.src = dataUrl;
+            },
+
+            apply: function () {
+                var el = document.getElementById('app-wallpaper');
+                var scrim = document.getElementById('app-wallpaper-scrim');
+                var html = document.documentElement;
+                if (!el || !scrim) return;
+
+                var id = localStorage.getItem('scholarbud_wall') || 'none';
+                var custom = localStorage.getItem('scholarbud_wall_custom') || '';
+                var isDark = localStorage.getItem('scholarbud_wall_dark') !== '0';
+
+                html.classList.remove('wall-on', 'wall-light-text', 'wall-dark-text');
+
+                if (id === 'none' || (id === 'custom' && !custom)) {
+                    el.style.backgroundImage = 'none';
+                    scrim.style.background = 'transparent';
+                    return;
+                }
+
+                if (id === 'custom') {
+                    el.style.backgroundImage = 'url("' + custom + '")';
+                } else {
+                    var w = this.LIST.filter(function (x) { return x.id === id; })[0];
+                    el.style.backgroundImage = w ? this.artCss(w) : 'none';
+                    isDark = true;
+                }
+
+                html.classList.add('wall-on');
+                html.classList.add(isDark ? 'wall-light-text' : 'wall-dark-text');
+                scrim.style.background = isDark ? 'rgba(6,10,18,0.62)' : 'rgba(255,255,255,0.66)';
+            },
+
+            pick: function (id) {
+                localStorage.setItem('scholarbud_wall', id);
+                this.apply(); this.render();
+                NotificationManager.show('Wallpaper changed.', 'success');
+            },
+
+            upload: function (ev) {
+                var file = ev.target.files && ev.target.files[0];
+                if (!file) return;
+                if (file.size > 3 * 1024 * 1024) {
+                    NotificationManager.show('Please pick a picture under 3 MB.', 'error');
+                    return;
+                }
+                var reader = new FileReader();
+                var self = this;
+                reader.onload = function (e) {
+                    var data = e.target.result;
+                    self.brightnessOf(data, function (lum) {
+                        // bright picture -> dark text; dark picture -> light text
+                        localStorage.setItem('scholarbud_wall_dark', lum < 0.5 ? '1' : '0');
+                        localStorage.setItem('scholarbud_wall_custom', data);
+                        localStorage.setItem('scholarbud_wall', 'custom');
+                        self.apply(); self.render();
+                        NotificationManager.show('Your picture is set, and the text colour was adjusted to stay readable.', 'success');
+                    });
+                };
+                reader.readAsDataURL(file);
+                ev.target.value = '';
+            },
+
+            render: function () {
+                var host = document.getElementById('wall-picker');
+                if (!host) return;
+                host.innerHTML = '';
+                var self = this;
+                var current = localStorage.getItem('scholarbud_wall') || 'none';
+                this.LIST.forEach(function (w) {
+                    var b = document.createElement('button');
+                    b.title = w.name;
+                    b.className = 'h-8 w-8 rounded-lg transition-all border ' +
+                        (current === w.id ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-transparent');
+                    b.style.background = (w.id === 'none')
+                        ? 'var(--sb-line)'
+                        : 'linear-gradient(135deg,' + w.a + ',' + w.b + ')';
+                    b.onclick = function () { self.pick(w.id); };
+                    host.appendChild(b);
+                });
+                var up = document.createElement('button');
+                up.title = 'Use your own picture';
+                up.className = 'h-8 w-8 rounded-lg flex items-center justify-center border ' +
+                    (current === 'custom' ? 'border-indigo-500 ring-2 ring-indigo-500/30 text-indigo-500' : 'border-transparent text-slate-400') + ' sb-card';
+                up.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>';
+                up.onclick = function () { document.getElementById('wall-file-input').click(); };
+                host.appendChild(up);
+            }
+        };
 
         /* ============================================================
            App logo chooser
@@ -4041,7 +4373,7 @@
                 else body = '<path d="M2 9.5 12 5l10 4.5-10 4.5L2 9.5z"/><path d="M6 11.5V16c0 1.7 2.7 3 6 3s6-1.3 6-3v-4.5"/><path d="M21 9.5V15"/>';
                 return head + body + '</svg>';
             },
-            get: function () { return localStorage.getItem('scholarbud_logo') || 'cap'; },
+            get: function () { return 'cap'; },   // one logo for everyone
             set: function (id) {
                 localStorage.setItem('scholarbud_logo', id);
                 this.apply(); this.render();
@@ -4291,9 +4623,15 @@
                             '<p class="text-[9px] sb-muted font-mono">' + window.escapeHtml(o.code) + '</p>' +
                         '</div>' +
                         (active
-                            ? '<span class="text-[9px] font-bold text-indigo-500 shrink-0">Active</span>'
-                            : '<button data-del="' + o.code + '" title="Leave / delete" class="h-6 w-6 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors shrink-0"><i class="fa-solid fa-xmark text-[10px]"></i></button>');
+                            ? '<div class="flex items-center gap-0.5 shrink-0">' +
+                                '<span class="text-[9px] font-bold text-indigo-500 mr-0.5">Active</span>' +
+                                (isOrgAdmin() ? '<button data-rename="1" title="Rename whiteboard" class="h-6 w-6 rounded-lg flex items-center justify-center text-slate-400 hover:text-indigo-500 hover:bg-indigo-500/10"><i class="fa-solid fa-pen text-[9px]"></i></button>' : '') +
+                                (isHeadAdmin() ? '<button data-destroy="1" title="Delete whiteboard" class="h-6 w-6 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-500/10"><i class="fa-solid fa-trash-can text-[9px]"></i></button>' : '') +
+                              '</div>'
+                            : '<button data-del="' + o.code + '" title="Leave" class="h-6 w-6 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors shrink-0"><i class="fa-solid fa-xmark text-[10px]"></i></button>');
                     row.addEventListener('click', function (e) {
+                        if (e.target.closest('[data-rename]')) { e.stopPropagation(); renameWhiteboard(); return; }
+                        if (e.target.closest('[data-destroy]')) { e.stopPropagation(); deleteWhiteboard(); return; }
                         var del = e.target.closest('[data-del]');
                         if (del) {
                             e.stopPropagation();
@@ -4440,6 +4778,39 @@
                     }
                 }, function () {});
             } catch (e) { console.warn('pending watch failed', e); }
+        }
+
+        /* ---------- rename / delete a whiteboard ---------- */
+        async function renameWhiteboard() {
+            if (!isOrgAdmin()) { NotificationManager.show('Only an admin can rename this whiteboard.', 'error'); return; }
+            const current = window.appState.orgName || '';
+            const name = window.prompt('New name for this whiteboard:', current);
+            if (name === null) return;
+            const clean = name.trim();
+            if (!clean) return;
+            window.appState.orgName = clean;
+            const o = window.OrgManager.list().filter(function (x) { return x.code === window.appState.orgCode; })[0];
+            if (o) { o.name = clean; window.OrgManager.save(); }
+            localStorage.setItem('scholarbud_org_name', clean);
+            await saveAdminOrganisationData();
+            NotificationManager.show('Whiteboard renamed to "' + clean + '".', 'success');
+        }
+
+        async function deleteWhiteboard() {
+            if (!isHeadAdmin()) { NotificationManager.show('Only the Head Admin can delete this whiteboard.', 'error'); return; }
+            const code = window.appState.orgCode;
+            const name = window.appState.orgName || 'this whiteboard';
+            window.customConfirm('Delete "' + name + '"?',
+                'This removes it for everyone, permanently. Nobody will be able to join with that code again. This cannot be undone.',
+                async function () {
+                    if (window.db && window.deleteDoc) {
+                        try {
+                            await window.deleteDoc(window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'orgs', code));
+                        } catch (e) { console.warn('could not delete online copy', e); }
+                    }
+                    window.OrgManager.remove(code);
+                    NotificationManager.show('Whiteboard deleted.', 'info');
+                });
         }
 
         /* ---------- shared files (members can post for the group) ---------- */
@@ -4709,6 +5080,7 @@
             safe(function () { EasterEgg.run(); });
             safe(function () { if (window.ScholarBudInstall) ScholarBudInstall.mount('#install-app-btn'); });
             safe(function () { AppLogos.apply(); AppLogos.render(); });
+            safe(function () { Wallpaper.apply(); Wallpaper.render(); });
             safe(function () { AutoRefresh.start(); });
         };
     </script>
