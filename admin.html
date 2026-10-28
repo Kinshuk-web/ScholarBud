@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Page not found</title>
+<meta name="robots" content="noindex, nofollow">
+<style>
+  :root { --bg:#faf9f8; --surface:#fff; --text:#17171a; --muted:#8a8f98; --line:#ebe8e4; --acc:#bc2a2a; }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background:var(--bg); color:var(--text); padding:20px;
+    font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased; user-select:none;
+  }
+  .wrap { width:100%; max-width:520px; }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:20px; padding:28px; }
+  h1 { font-size:19px; margin:0 0 6px; font-weight:800; letter-spacing:-.02em; }
+  p.sub { margin:0; color:var(--muted); font-size:12.5px; line-height:1.6; }
+  .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; color:var(--muted); margin-top:18px; }
+  input, textarea, select {
+    width:100%; font:inherit; font-size:13px; padding:11px 12px; border-radius:11px;
+    border:1px solid var(--line); background:#fbfbfa; color:var(--text); outline:none; margin-top:6px;
+  }
+  input:focus, textarea:focus { border-color:var(--acc); background:#fff; }
+  label { display:block; font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin-top:14px; }
+  button {
+    font:inherit; font-weight:800; font-size:12.5px; padding:12px 16px; border-radius:11px;
+    border:1px solid transparent; background:var(--acc); color:#fff; cursor:pointer; width:100%; margin-top:16px;
+  }
+  button.ghost { background:transparent; color:var(--text); border-color:var(--line); }
+  button.small { width:auto; padding:7px 11px; font-size:11px; margin:0; border-radius:9px; }
+  button.danger { background:#fff; color:#bc2a2a; border-color:#f0c9c9; }
+  .row { display:flex; gap:8px; align-items:center; }
+  .hidden { display:none !important; }
+  .muted { color:var(--muted); font-size:11px; }
+  .ann { border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin-top:8px; display:flex; gap:10px; align-items:center; }
+  .ann b { font-size:12px; display:block; }
+  .ann span { font-size:10.5px; color:var(--muted); display:block; margin-top:2px; }
+  .badge { font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; padding:3px 7px; border-radius:999px; background:rgba(188,42,42,.1); color:var(--acc); }
+  .toast {
+    position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:#17171a; color:#fff;
+    padding:10px 16px; border-radius:999px; font-size:12px; font-weight:700; opacity:0; pointer-events:none;
+    transition:opacity .25s; z-index:99;
+  }
+  .toast.show { opacity:1; }
+  .hint { margin-top:14px; font-size:10.5px; color:var(--muted); line-height:1.6; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- What everyone else sees -->
+  <div class="card" id="notfound">
+    <h1>*PAGE NOT FOUND* - ScholarBud</h1>
+    <p class="sub">The page you were looking for does not exist, or has been moved.</p>
+    <p class="code">HTTP 404 &middot; scholar-bud</p>
+  </div>
+
+  <!-- The login, only after the secret gesture -->
+  <div class="card hidden" id="loginBox">
+    <h1>Owner sign in</h1>
+    <p class="sub">This area is private. Enter your ID and password.</p>
+    <label>ID</label>
+    <input id="uid" type="text" autocomplete="username" placeholder="owner">
+    <label>Password</label>
+    <input id="pwd" type="password" autocomplete="current-password" placeholder="••••••••">
+    <button onclick="signIn()">Sign in</button>
+    <p class="hint">Default is <b>owner</b> / <b>scholarbud</b> — change it once you are in.</p>
+    <p class="hint" id="loginMsg" style="color:#bc2a2a"></p>
+  </div>
+
+  <!-- The control room -->
+  <div class="card hidden" id="panel">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <h1 style="margin:0">Owner panel</h1>
+        <p class="sub">Announcements and tools for ScholarBud.</p>
+      </div>
+      <button class="small ghost" onclick="signOut()">Sign out</button>
+    </div>
+
+    <label>Title</label>
+    <input id="aTitle" type="text" placeholder="Exam week starts Monday">
+
+    <label>Message</label>
+    <textarea id="aText" rows="4" placeholder="Write what everyone should see on the home page..."></textarea>
+
+    <label>Picture (optional, under 400 KB)</label>
+    <input id="aImage" type="file" accept="image/*">
+
+    <label style="display:flex; align-items:center; gap:8px; text-transform:none; letter-spacing:0; font-size:12px; font-weight:700; color:var(--text)">
+      <input id="aMarquee" type="checkbox" style="width:16px; height:16px; margin:0; accent-color:#bc2a2a">
+      Scroll the text like a ticker
+    </label>
+
+    <button onclick="publish()">Publish to the app</button>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost" onclick="previewOnApp()">Open the app</button>
+      <button class="ghost" onclick="backup()">Copy backup</button>
+    </div>
+
+    <label>Posted announcements</label>
+    <div id="annList"></div>
+
+    <label>Change password</label>
+    <input id="newPwd" type="password" placeholder="New password">
+    <button class="ghost" onclick="changePassword()">Update password</button>
+
+    <p class="hint">
+      Announcements are stored in this browser. To show them to everyone on every device,
+      the same text needs to reach your online database — ask and I will connect it.
+    </p>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="config.js" onerror="window.__sbConfigMissing=true;"></script>
+<script type="module" src="announce-store.js"></script>
+
+<script>
+(function () {
+  'use strict';
+
+  var HOLD_MS = 10000;      // hold the left click this long
+  var SCROLL_MS = 4000;     // then scroll down within this long
+  var HOLD_KEY = 'scholarbud_owner_session';
+
+  var holdTimer = null, armed = false, armedAt = 0, holdStart = 0;
+
+  /* ---------- the secret ---------- */
+  function beginHold(e) {
+    if (e && e.button !== undefined && e.button !== 0) return;   // left click / touch only
+    holdStart = Date.now();
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(function () {
+      armed = true;
+      armedAt = Date.now();
+      document.body.style.cursor = 'copy';
+    }, HOLD_MS);
+  }
+  function cancelHold() {
+    if (!armed) { clearTimeout(holdTimer); }
+  }
+  function onScroll() {
+    if (!armed) return;
+    if (Date.now() - armedAt <= SCROLL_MS) { unlock(); }
+    else { armed = false; document.body.style.cursor = ''; }
+  }
+  function unlock() {
+    armed = false;
+    document.body.style.cursor = '';
+    document.getElementById('notfound').classList.add('hidden');
+    if (localStorage.getItem(HOLD_KEY) === '1') { openPanel(); }
+    else { document.getElementById('loginBox').classList.remove('hidden'); }
+  }
+
+  document.addEventListener('mousedown', beginHold);
+  document.addEventListener('mouseup', cancelHold);
+  document.addEventListener('touchstart', beginHold, { passive: true });
+  document.addEventListener('touchend', cancelHold);
+  window.addEventListener('wheel', onScroll, { passive: true });
+  window.addEventListener('touchmove', onScroll, { passive: true });
+  // the page is short, so also catch a downward drag
+  var lastY = 0;
+  document.addEventListener('touchmove', function (e) {
+    var y = e.touches[0] ? e.touches[0].clientY : 0;
+    if (y - lastY > 20) onScroll();
+    lastY = y;
+  }, { passive: true });
+
+  /* ---------- password ---------- */
+  async function hash(text) {
+    try {
+      var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+      return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+    } catch (e) {
+      // fallback for browsers that block crypto on plain files
+      var h = 5381;
+      for (var i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
+      return 'x' + h.toString(16);
+    }
+  }
+  function storedUser() { return localStorage.getItem('scholarbud_owner_user') || 'owner'; }
+  async function storedHash() {
+    var h = localStorage.getItem('scholarbud_owner_hash');
+    if (h) return h;
+    return await hash('scholarbud');
+  }
+
+  window.signIn = async function () {
+    var u = document.getElementById('uid').value.trim();
+    var p = document.getElementById('pwd').value;
+    var msg = document.getElementById('loginMsg');
+    if (u !== storedUser() || (await hash(p)) !== (await storedHash())) {
+      msg.textContent = 'Wrong ID or password.';
+      return;
+    }
+    msg.textContent = '';
+    localStorage.setItem(HOLD_KEY, '1');
+    openPanel();
+  };
+
+  window.signOut = function () {
+    localStorage.removeItem(HOLD_KEY);
+    document.getElementById('panel').classList.add('hidden');
+    document.getElementById('loginBox').classList.add('hidden');
+    document.getElementById('notfound').classList.remove('hidden');
+    document.getElementById('uid').value = '';
+    document.getElementById('pwd').value = '';
+  };
+
+  function openPanel() {
+    document.getElementById('notfound').classList.add('hidden');
+    document.getElementById('loginBox').classList.add('hidden');
+    document.getElementById('panel').classList.remove('hidden');
+    renderList();
+    pullFromCloud();
+  }
+
+  async function pullFromCloud() {
+    if (!window.AnnounceStore) return;
+    var cloud = await window.AnnounceStore.fetchCloud();
+    if (cloud && cloud.length) { save(cloud); }
+    window.AnnounceStore.watch(function (arr) { save(arr); });
+  }
+  window.addEventListener('announce-store-ready', function () {
+    if (!document.getElementById('panel').classList.contains('hidden')) pullFromCloud();
+  });
+
+  /* ---------- announcements (same store the app reads) ---------- */
+  function list() {
+    try { return JSON.parse(localStorage.getItem('scholarbud_announcements') || '[]'); } catch (e) { return []; }
+  }
+  function save(arr) {
+    localStorage.setItem('scholarbud_announcements', JSON.stringify(arr));
+    renderList();
+  }
+
+  function toast(t) {
+    var el = document.getElementById('toast');
+    el.textContent = t;
+    el.classList.add('show');
+    setTimeout(function () { el.classList.remove('show'); }, 1800);
+  }
+
+  window.publish = function () {
+    var title = document.getElementById('aTitle').value.trim();
+    var text = document.getElementById('aText').value.trim();
+    var marquee = document.getElementById('aMarquee').checked;
+    var fileEl = document.getElementById('aImage');
+    if (!title && !text) { toast('Write something first'); return; }
+
+    function finish(image) {
+      var arr = list();
+      arr.unshift({
+        title: title || 'Announcement', text: text, image: image || '',
+        marquee: marquee, at: new Date().toISOString(), by: 'Owner'
+      });
+      save(arr.slice(0, 20));
+      if (window.AnnounceStore) {
+        window.AnnounceStore.pushCloud(arr.slice(0, 20)).then(function (ok) {
+          toast(ok ? 'Published to everyone' : 'Saved here only - cloud not connected');
+        });
+      }
+      document.getElementById('aTitle').value = '';
+      document.getElementById('aText').value = '';
+      document.getElementById('aMarquee').checked = false;
+      fileEl.value = '';
+      toast('Published - open the app to see it');
+    }
+
+    var f = fileEl.files && fileEl.files[0];
+    if (f) {
+      if (f.size > 400 * 1024) { toast('Picture must be under 400 KB'); return; }
+      var r = new FileReader();
+      r.onload = function (e) { finish(e.target.result); };
+      r.readAsDataURL(f);
+    } else { finish(''); }
+  };
+
+  function renderList() {
+    var host = document.getElementById('annList');
+    if (!host) return;
+    var arr = list();
+    if (!arr.length) { host.innerHTML = '<p class="muted">Nothing posted yet.</p>'; return; }
+    host.innerHTML = '';
+    arr.forEach(function (a, i) {
+      var row = document.createElement('div');
+      row.className = 'ann';
+      row.innerHTML = '<div style="flex:1; min-width:0">' +
+          '<b>' + escapeHtml(a.title || '') + '</b>' +
+          '<span>' + (a.at ? new Date(a.at).toLocaleString('en-IN') : '') + (a.marquee ? ' · ticker' : '') + '</span>' +
+        '</div>' +
+        (i === 0 ? '<span class="badge">Live</span>' : '') +
+        '<button class="small danger" data-i="' + i + '">Delete</button>';
+      host.appendChild(row);
+    });
+    host.querySelectorAll('[data-i]').forEach(function (b) {
+      b.onclick = function () {
+        var arr2 = list();
+        arr2.splice(+b.getAttribute('data-i'), 1);
+        save(arr2);
+        toast('Deleted');
+      };
+    });
+  }
+
+  window.changePassword = async function () {
+    var v = document.getElementById('newPwd').value;
+    if (v.length < 6) { toast('Use at least 6 characters'); return; }
+    localStorage.setItem('scholarbud_owner_hash', await hash(v));
+    document.getElementById('newPwd').value = '';
+    toast('Password updated');
+  };
+
+  window.backup = function () {
+    var text = JSON.stringify(list(), null, 2);
+    navigator.clipboard.writeText(text).then(function () { toast('Copied to clipboard'); },
+      function () { toast('Copy failed - try a laptop'); });
+  };
+
+  window.previewOnApp = function () { window.open('index.html', '_blank'); };
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  /* ---------- stay unlocked for this session only ---------- */
+  if (localStorage.getItem(HOLD_KEY) === '1') {
+    // still needs the secret to reveal, but skips the password
+  }
+})();
+</script>
+</body>
+</html>
