@@ -35,6 +35,7 @@
     </script>
     <!-- App config: API keys live here (git-ignored), NOT in this file -->
     <script src="config.js" onerror="window.__sbConfigMissing=true;"></script>
+    <script type="module" src="announce-store.js"></script>
     <!-- Fonts & Icons -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -168,6 +169,19 @@
         [class*="shadow-sm"] { box-shadow: none !important; }
         #panel-dashboard > div.bg-gradient-to-r { background-image: none !important; background-color: rgb(var(--a-600)) !important; }
         .min-flat { border-radius: 1rem; }
+
+        /* chat takes the whole screen - no second scrollbar */
+        body.chat-open #main-scroll-content { overflow: hidden !important; padding-bottom: 0 !important; }
+        body.chat-open #panel-chatbot { min-height: 0 !important; padding-bottom: 0 !important; }
+        #panel-chatbot #chatbot-messages-scroll { padding: 14px 16px; }
+        /* hide the page title row while chatting so the chat gets the room */
+        body.chat-open #main-scroll-content > div:first-child { display: none; }
+
+        /* announcement marquee */
+        @keyframes sbMarquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+        .sb-marquee { overflow: hidden; }
+        .sb-marquee-track { display: inline-flex; white-space: nowrap; animation: sbMarquee 20s linear infinite; }
+        .sb-marquee:hover .sb-marquee-track { animation-play-state: paused; }
 
         /* segmented controls */
         .engine-seg { font-size: 10px; font-weight: 800; padding: 5px 11px; border-radius: 9999px; color: var(--sb-muted); transition: all .25s ease; letter-spacing: .01em; }
@@ -588,6 +602,7 @@
             orgs: (function(){ try { return JSON.parse(localStorage.getItem('scholarbud_orgs') || '[]'); } catch(e){ return []; } })(),
             pending: [],
             ownerUserId: '',
+            settings: {},
             resources: (function(){ try { return JSON.parse(localStorage.getItem('scholarbud_resources_local') || '[]'); } catch(e){ return []; } })()
         };
 
@@ -788,6 +803,10 @@
                 avatar.src = `https://placehold.co/100x100/6366f1/ffffff?text=${(window.appState.userDisplayName || window.appState.memberName || 'S')[0]}`;
             }
             
+            const adminBtn = document.getElementById('org-admin-btn');
+            if (adminBtn) adminBtn.classList.toggle('hidden', !isHeadAdmin());
+            if (adminBtn && isHeadAdmin()) { adminBtn.classList.remove('hidden'); adminBtn.classList.add('flex'); }
+
             const badge = document.getElementById('sidebar-role-badge');
             const r = myRole();
             if (r === 'headadmin') {
@@ -1018,6 +1037,19 @@
                             const meRec = members.filter(m => m.uid === window.appState.userId)[0] || {};
                             window.appState.userMode = modeForRole(meRec.role);
                             window.appState.members = members;
+                        } else if (!settingOn('requireApproval')) {
+                            // approval is switched off - let them straight in
+                            members.push({
+                                uid: window.appState.userId,
+                                name: nickInput,
+                                email: window.appState.userEmail || '',
+                                photo: window.appState.userPhotoURL || '',
+                                role: 'member',
+                                joinedAt: new Date().toISOString()
+                            });
+                            await window.setDoc(orgRef, { ...cloudData, members: members });
+                            window.appState.userMode = 'member';
+                            window.appState.members = members;
                         } else {
                             if (!pendingList.some(p => p.uid === window.appState.userId)) {
                                 pendingList.push({
@@ -1143,6 +1175,7 @@
                 members: window.appState.members || [],
                 pending: window.appState.pending || [],
                 resources: window.appState.resources || [],
+                settings: window.appState.settings || {},
                 tasks: window.appState.tasks,
                 calendarEvents: window.appState.calendarEvents,
                 notes: window.appState.notes,
@@ -1181,6 +1214,7 @@
                         window.appState.pending = cloudData.pending || [];
                         window.appState.resources = cloudData.resources || [];
                         window.appState.ownerUserId = cloudData.ownerUserId || cloudData.adminUserId || '';
+                        window.appState.settings = cloudData.settings || {};
                         loaded = true;
                     }
                 } catch (e) {
@@ -1210,6 +1244,7 @@
                             window.appState.pending = cloudData.pending || [];
                             window.appState.resources = cloudData.resources || [];
                             window.appState.ownerUserId = cloudData.ownerUserId || cloudData.adminUserId || '';
+                            window.appState.settings = cloudData.settings || {};
                             healOwnerRank();
 
                             renderApp();
@@ -1432,6 +1467,59 @@
         </div>
     </div>
 
+    <!-- Head Admin panel (only the owner sees the button) -->
+    <div id="org-admin-panel" class="hidden fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-3 backdrop-blur-sm">
+        <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-3xl max-w-2xl w-full max-h-[88vh] overflow-y-auto p-5 space-y-5 font-sans">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="font-extrabold text-base text-slate-800 dark:text-white flex items-center gap-2"><i class="fa-solid fa-shield-halved text-indigo-500"></i> Head Admin Panel</h3>
+                    <p class="text-[11px] text-slate-400">Only you can see this.</p>
+                </div>
+                <button onclick="closeOrgAdminPanel()" class="h-8 w-8 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div>
+                <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">At a glance</p>
+                <div id="oa-stats" class="grid grid-cols-2 sm:grid-cols-4 gap-2"></div>
+            </div>
+
+            <div>
+                <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Features</p>
+                <div id="oa-toggles" class="space-y-2"></div>
+            </div>
+
+            <div class="space-y-2">
+                <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Announcement to members</p>
+                <input id="oa-ann-title" type="text" placeholder="Title" class="w-full text-xs bg-slate-50 dark:bg-slate-700 p-3 rounded-xl border border-slate-200 dark:border-slate-600 outline-none font-semibold">
+                <textarea id="oa-ann-text" rows="3" placeholder="What do you want to tell everyone?" class="w-full text-xs bg-slate-50 dark:bg-slate-700 p-3 rounded-xl border border-slate-200 dark:border-slate-600 outline-none font-semibold"></textarea>
+                <div class="flex flex-wrap items-center gap-3">
+                    <input type="file" id="oa-ann-image" accept="image/*" class="text-[10px]">
+                    <label class="flex items-center gap-1.5 text-[10px] font-bold"><input type="checkbox" id="oa-ann-marquee" class="h-3.5 w-3.5 accent-indigo-600"> Scroll it like a ticker</label>
+                </div>
+                <button onclick="publishOrgAnnouncement()" class="w-full bg-indigo-600 text-white font-bold text-xs py-3 rounded-xl">Publish announcement</button>
+                <div id="oa-ann-list" class="space-y-1.5"></div>
+            </div>
+
+            <div>
+                <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">API status</p>
+                <div id="oa-api" class="space-y-1"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Full screen announcement -->
+    <div id="announcement-fullscreen" class="hidden fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 backdrop-blur-md">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-6 space-y-3 font-sans">
+            <div class="flex items-start justify-between gap-3">
+                <h3 id="ann-full-title" class="font-extrabold text-lg text-slate-800 dark:text-white"></h3>
+                <button onclick="closeAnnouncement()" class="h-8 w-8 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 shrink-0"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <p id="ann-full-date" class="text-[10px] text-slate-400"></p>
+            <img id="ann-full-image" class="hidden w-full rounded-2xl" alt="">
+            <p id="ann-full-text" class="text-sm leading-relaxed whitespace-pre-wrap text-slate-700 dark:text-slate-200"></p>
+        </div>
+    </div>
+
     <div id="app-main-layout" class="hidden flex-1 flex flex-col overflow-hidden h-full">
         
         <!-- Privilege Security Banner -->
@@ -1469,6 +1557,10 @@
                                 <span id="sidebar-role-badge" class="mt-1 inline-block text-[9px] font-bold">Individual</span>
                             </div>
                         </div>
+
+                        <button onclick="openOrgAdminPanel()" id="org-admin-btn" class="hidden w-full mb-4 bg-indigo-500/10 text-indigo-500 border border-indigo-500/25 py-2 rounded-xl text-[10px] font-bold items-center justify-center gap-1.5 hover:bg-indigo-500 hover:text-white transition-all">
+                            <i class="fa-solid fa-shield-halved"></i> Head Admin panel
+                        </button>
 
                         <!-- Navigation Items -->
                         <nav class="space-y-1.5 font-sans">
@@ -1583,6 +1675,9 @@
                             <i class="fa-solid fa-wand-magic-sparkles"></i> Ask Scholar Buddy
                         </button>
                     </div>
+
+                    <!-- Announcements from the admin panel -->
+                    <div id="announcement-banner" class="hidden"></div>
 
                     <!-- PANEL 1: DASHBOARD -->
                     <section id="panel-dashboard" class="tab-panel space-y-6">
@@ -1740,11 +1835,12 @@
                                     <input type="text" id="task-input" placeholder="Type a task and hit enter (e.g. Solve page 14 calculus workbook)..." onkeydown="if(event.key === 'Enter') createNewTask()" class="w-full text-xs bg-white dark:bg-slate-700 px-4 py-3.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-white font-medium">
                                 </div>
                                 <div class="flex items-center gap-2 w-full md:w-auto shrink-0 animate-fade-in">
-                                    <select id="task-category" class="text-xs bg-white dark:bg-slate-700 px-3 py-3.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none text-slate-800 dark:text-white font-bold w-full md:w-32">
+                                    <select id="task-category" onchange="onCategoryChange(this)" class="text-xs bg-white dark:bg-slate-700 px-3 py-3.5 rounded-xl border border-slate-200 dark:border-slate-600 focus:outline-none text-slate-800 dark:text-white font-bold w-full md:w-32">
                                         <option value="Studies">Studies</option>
                                         <option value="Coding">Coding</option>
                                         <option value="General">General</option>
                                         <option value="Exam Prep">Exam Prep</option>
+                                        <option value="__custom">+ Add your own...</option>
                                     </select>
                                     <button onclick="createNewTask()" class="bg-indigo-600 hover:bg-indigo-550 text-white font-bold text-xs px-6 py-3.5 rounded-xl shadow-lg active:scale-95 transition-all whitespace-nowrap w-full md:w-auto">
                                         <i class="fa-solid fa-plus mr-1"></i> Add Task
@@ -2252,6 +2348,9 @@
             const panel = document.getElementById(`panel-${tabId}`);
             if (panel) panel.classList.remove('hidden');
 
+            // the chat gets the full height and the page stops scrolling behind it
+            document.body.classList.toggle('chat-open', tabId === 'chatbot');
+
             // Make sure the engine dropdown is populated whenever the chat opens.
             if (tabId === 'chatbot' && window.populateChatModelSelect) populateChatModelSelect();
 
@@ -2277,10 +2376,26 @@
 
             renderApp();
             
+            if (tabId === 'chatbot') requestAnimationFrame(fitChatPanel);
+
             if (document.getElementById('sidebar').classList.contains('left-0')) {
                 toggleMobileSidebar();
             }
         }
+
+        // Size the chat to whatever space is actually left on screen.
+        function fitChatPanel() {
+            const p = document.getElementById('panel-chatbot');
+            if (!p || p.classList.contains('hidden')) return;
+            const top = p.getBoundingClientRect().top;
+            const isPhone = window.innerWidth < 768;
+            const reserve = isPhone ? 92 : 20;
+            p.style.height = Math.max(300, window.innerHeight - top - reserve) + 'px';
+            p.style.minHeight = '0px';
+        }
+        window.addEventListener('resize', function () {
+            if (document.body.classList.contains('chat-open')) fitChatPanel();
+        });
 
         function startMidnightCountdown() {
             setInterval(() => {
@@ -2448,12 +2563,52 @@
             }
         }
 
+        // ---- your own task types ----
+        function customCategories() {
+            try { return JSON.parse(localStorage.getItem('scholarbud_task_cats') || '[]'); } catch (e) { return []; }
+        }
+        function loadCustomCategories() {
+            const sel = document.getElementById('task-category');
+            if (!sel) return;
+            const marker = sel.querySelector('option[value="__custom"]');
+            customCategories().forEach(function (c) {
+                let exists = false;
+                for (let i = 0; i < sel.options.length; i++) if (sel.options[i].value === c) exists = true;
+                if (!exists) {
+                    const o = document.createElement('option');
+                    o.value = c; o.textContent = c;
+                    sel.insertBefore(o, marker);
+                }
+            });
+        }
+        function onCategoryChange(sel) {
+            if (sel.value !== '__custom') return;
+            const name = window.prompt('Name your new task type (e.g. "Music", "Sports", "Revision"):', '');
+            if (name === null || !name.trim()) { sel.value = 'Studies'; return; }
+            const clean = name.trim().slice(0, 24);
+            const list = customCategories();
+            if (list.indexOf(clean) === -1) { list.push(clean); localStorage.setItem('scholarbud_task_cats', JSON.stringify(list)); }
+            let opt = null;
+            for (let i = 0; i < sel.options.length; i++) if (sel.options[i].value === clean) opt = sel.options[i];
+            if (!opt) {
+                opt = document.createElement('option');
+                opt.value = clean; opt.textContent = clean;
+                sel.insertBefore(opt, sel.querySelector('option[value="__custom"]'));
+            }
+            sel.value = clean;
+            NotificationManager.show('Task type "' + clean + '" added.', 'success');
+        }
+
         async function toggleTask(id) {
             const task = window.appState.tasks.find(t => t.id === id);
             if (!task) return;
 
             // Inside an organisation, everyone ticks off their OWN completion.
             if (inOrg()) {
+                if (window.appState.userMode === 'member' && !settingOn('allowMemberTasks')) {
+                    NotificationManager.show('Your admin turned off task ticking.', 'error');
+                    return;
+                }
                 task.completions = task.completions || {};
                 const uid = window.appState.userId || 'me';
                 if (task.completions[uid]) {
@@ -2539,6 +2694,11 @@
             const query = input.value.trim();
 
             if (!query && !window.appState.uploadedImageBase64) return;
+
+            if (window.appState.userMode === 'member' && !settingOn('allowMemberChat')) {
+                NotificationManager.show('Your admin turned off the chatbot for members.', 'error');
+                return;
+            }
 
             if (!window.SB.hasGemini()) {
                 openApiKeyModal();
@@ -4980,6 +5140,11 @@
         };
 
         function handleSharedFileSelect(ev) {
+            if (window.appState.userMode === 'member' && !settingOn('allowMemberUpload')) {
+                NotificationManager.show('Your admin turned off uploads.', 'error');
+                ev.target.value = '';
+                return;
+            }
             var file = ev.target.files && ev.target.files[0];
             if (!file) return;
             if (file.size > window.SharedFiles.MAX_BYTES) {
@@ -5598,6 +5763,10 @@
             NotificationManager.show('Nothing found for "' + raw + '". Try a task, note or date like 15/8.', 'error');
         }
 
+        window.addEventListener('announce-store-ready', function () {
+            if (window.Announcements) Announcements.syncFromCloud();
+        });
+
         // close the search results when clicking elsewhere
         document.addEventListener('click', function (e) {
             var bar = document.getElementById('event-search-input');
@@ -5606,6 +5775,206 @@
             if (bar.contains(e.target) || box.contains(e.target)) return;
             box.classList.add('hidden');
         });
+
+        /* ---------- head admin panel ---------- */
+        const FEATURES = [
+            { key: 'requireApproval',  label: 'New people need approval to join', def: true },
+            { key: 'allowMemberChat',  label: 'Members can use Scholar Buddy',    def: true },
+            { key: 'allowMemberTasks', label: 'Members can tick off tasks',       def: true },
+            { key: 'allowMemberUpload',label: 'Members can upload shared files',  def: true },
+            { key: 'showAnnouncements',label: 'Show announcements on the home page', def: true }
+        ];
+        function settingOn(key) {
+            const s = (window.appState && window.appState.settings) || {};
+            const f = FEATURES.filter(function (x) { return x.key === key; })[0];
+            if (s[key] === undefined) return f ? f.def : true;
+            return !!s[key];
+        }
+        function openOrgAdminPanel() {
+            if (!isHeadAdmin()) { NotificationManager.show('Only the Head Admin can open this.', 'error'); return; }
+            document.getElementById('org-admin-panel').classList.remove('hidden');
+            renderOrgAdminPanel();
+        }
+        function closeOrgAdminPanel() { document.getElementById('org-admin-panel').classList.add('hidden'); }
+
+        function renderOrgAdminPanel() {
+            const A = window.appState || {};
+            let done = 0;
+            (A.tasks || []).forEach(function (x) { done += Object.keys(x.completions || {}).length; });
+            const stats = [
+                ['Members', (A.members || []).length], ['Waiting', (A.pending || []).length],
+                ['Tasks', (A.tasks || []).length], ['Tick-offs', done],
+                ['Notes', (A.notes || []).length], ['Documents', (A.documents || []).length],
+                ['Decks', (A.presentations || []).length], ['Files', (A.resources || []).length]
+            ];
+            document.getElementById('oa-stats').innerHTML = stats.map(function (s) {
+                return '<div class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-3">' +
+                    '<p class="text-[9px] font-bold uppercase text-slate-400">' + s[0] + '</p>' +
+                    '<p class="text-lg font-black text-slate-800 dark:text-white">' + s[1] + '</p></div>';
+            }).join('');
+
+            document.getElementById('oa-toggles').innerHTML = FEATURES.map(function (f) {
+                return '<label class="flex items-center justify-between gap-3 bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2.5 cursor-pointer">' +
+                    '<span class="text-[11px] font-semibold">' + f.label + '</span>' +
+                    '<input type="checkbox" data-feat="' + f.key + '"' + (settingOn(f.key) ? ' checked' : '') + ' class="h-4 w-4 accent-indigo-600"></label>';
+            }).join('');
+            document.querySelectorAll('#oa-toggles input[data-feat]').forEach(function (cb) {
+                cb.onchange = function () { setOrgFeature(cb.getAttribute('data-feat'), cb.checked); };
+            });
+
+            const rows = [
+                ['Gemini AI', window.SB.hasGemini()],
+                ['Sarvam AI', window.SB.hasSarvam()],
+                ['YouTube', window.SB.hasYouTube()],
+                ['Own server', window.SB.hasProxy()]
+            ];
+            document.getElementById('oa-api').innerHTML = rows.map(function (r) {
+                return '<div class="flex items-center justify-between text-[11px] font-semibold">' +
+                    '<span class="text-slate-600 dark:text-slate-300">' + r[0] + '</span>' +
+                    '<span class="' + (r[1] ? 'text-emerald-500' : 'text-rose-500') + ' font-bold">' +
+                    (r[1] ? 'connected' : 'not set') + '</span></div>';
+            }).join('');
+
+            const list = window.Announcements.list();
+            document.getElementById('oa-ann-list').innerHTML = list.length
+                ? list.slice(0, 5).map(function (a) {
+                    return '<div class="flex items-center gap-2 text-[10px] bg-slate-50 dark:bg-slate-700/50 rounded-lg px-2 py-1.5">' +
+                        '<span class="flex-1 truncate font-semibold">' + window.escapeHtml(a.title || '') + '</span>' +
+                        '<button data-ann-del="' + window.escapeHtml(a.at || '') + '" class="text-rose-500 font-bold shrink-0">Delete</button></div>';
+                  }).join('')
+                : '<p class="text-[10px] text-slate-400">Nothing posted yet.</p>';
+            document.querySelectorAll('[data-ann-del]').forEach(function (b) {
+                b.onclick = function () { deleteAnnouncement(b.getAttribute('data-ann-del')); };
+            });
+        }
+
+        async function setOrgFeature(key, on) {
+            window.appState.settings = window.appState.settings || {};
+            window.appState.settings[key] = !!on;
+            try { await saveAdminOrganisationData(); } catch (e) {}
+            NotificationManager.show('Feature updated.', 'success');
+            window.Announcements.render();
+        }
+
+        async function publishOrgAnnouncement() {
+            const title = document.getElementById('oa-ann-title').value.trim();
+            const text = document.getElementById('oa-ann-text').value.trim();
+            const marquee = document.getElementById('oa-ann-marquee').checked;
+            const fileEl = document.getElementById('oa-ann-image');
+            if (!title && !text) { NotificationManager.show('Write something first.', 'error'); return; }
+
+            const finish = function (image) {
+                const list = window.Announcements.list();
+                list.unshift({
+                    title: title || 'Announcement', text: text, image: image || '',
+                    marquee: marquee, at: new Date().toISOString(),
+                    by: window.appState.userDisplayName || 'Head Admin'
+                });
+                window.Announcements.save(list.slice(0, 20));
+                document.getElementById('oa-ann-title').value = '';
+                document.getElementById('oa-ann-text').value = '';
+                document.getElementById('oa-ann-marquee').checked = false;
+                fileEl.value = '';
+                renderOrgAdminPanel();
+                NotificationManager.show('Announcement published.', 'success');
+            };
+
+            const f = fileEl.files && fileEl.files[0];
+            if (f) {
+                if (f.size > 400 * 1024) { NotificationManager.show('Keep the image under 400 KB.', 'error'); return; }
+                const r = new FileReader();
+                r.onload = function (e) { finish(e.target.result); };
+                r.readAsDataURL(f);
+            } else { finish(''); }
+        }
+
+        function deleteAnnouncement(at) {
+            window.Announcements.save(window.Announcements.list().filter(function (a) { return (a.at || '') !== at; }));
+            renderOrgAdminPanel();
+        }
+
+        /* ---------- announcements (written by the owner's admin panel) ---------- */
+        window.Announcements = {
+            KEY: 'scholarbud_announcements',
+            list: function () {
+                try { return JSON.parse(localStorage.getItem(this.KEY) || '[]'); } catch (e) { return []; }
+            },
+            save: function (arr) {
+                localStorage.setItem(this.KEY, JSON.stringify(arr));
+                this.render();
+                // also send it up so every device sees it
+                if (window.AnnounceStore) window.AnnounceStore.pushCloud(arr);
+            },
+
+            // pull the newest announcements from the cloud and stay in step
+            syncFromCloud: async function () {
+                if (!window.AnnounceStore) return;
+                const cloud = await window.AnnounceStore.fetchCloud();
+                if (cloud && cloud.length) {
+                    localStorage.setItem(this.KEY, JSON.stringify(cloud));
+                    this.render();
+                }
+                window.AnnounceStore.watch(function (arr) {
+                    localStorage.setItem('scholarbud_announcements', JSON.stringify(arr));
+                    window.Announcements.render();
+                });
+            },
+            latest: function () {
+                const l = this.list();
+                return l.length ? l[0] : null;
+            },
+            render: function () {
+                const host = document.getElementById('announcement-banner');
+                if (!host) return;
+                const s = (window.appState && window.appState.settings) || {};
+                if (s.showAnnouncements === false) { host.classList.add('hidden'); host.innerHTML = ''; return; }
+
+                const a = this.latest();
+                if (!a) { host.classList.add('hidden'); host.innerHTML = ''; return; }
+
+                host.classList.remove('hidden');
+                const long = (a.text || '').length > 110 || a.marquee;
+                const body = long
+                    ? '<div class="sb-marquee flex-1"><span class="sb-marquee-track">' +
+                        window.escapeHtml(a.text) + '&nbsp;&nbsp;&bull;&nbsp;&nbsp;' + window.escapeHtml(a.text) +
+                      '</span></div>'
+                    : '<span class="flex-1 text-[11px] font-semibold truncate">' + window.escapeHtml(a.text) + '</span>';
+
+                host.innerHTML =
+                    '<div class="bg-indigo-500/10 border border-indigo-500/25 rounded-2xl p-3 flex items-center gap-3">' +
+                        '<span class="text-base shrink-0">' + (a.emoji || '\uD83D\uDCE3') + '</span>' +
+                        '<div class="min-w-0 flex-1">' +
+                            '<p class="text-[10px] font-black uppercase tracking-wider text-indigo-500">' + window.escapeHtml(a.title || 'Announcement') + '</p>' +
+                            body +
+                        '</div>' +
+                        '<button onclick="openAnnouncement()" class="shrink-0 text-[10px] font-bold px-2.5 py-1.5 rounded-lg bg-indigo-600 text-white">Learn more</button>' +
+                        '<button onclick="dismissAnnouncement()" class="shrink-0 text-slate-400 hover:text-rose-500 px-1"><i class="fa-solid fa-xmark text-[11px]"></i></button>' +
+                    '</div>';
+            }
+        };
+
+        function openAnnouncement() {
+            const a = window.Announcements.latest();
+            if (!a) return;
+            const ov = document.getElementById('announcement-fullscreen');
+            if (!ov) return;
+            document.getElementById('ann-full-title').textContent = a.title || 'Announcement';
+            document.getElementById('ann-full-text').textContent = a.text || '';
+            const img = document.getElementById('ann-full-image');
+            if (a.image) { img.src = a.image; img.classList.remove('hidden'); } else { img.classList.add('hidden'); img.removeAttribute('src'); }
+            document.getElementById('ann-full-date').textContent = a.at ? new Date(a.at).toLocaleString('en-IN') : '';
+            ov.classList.remove('hidden');
+        }
+        function closeAnnouncement() {
+            const ov = document.getElementById('announcement-fullscreen');
+            if (ov) ov.classList.add('hidden');
+        }
+        function dismissAnnouncement() {
+            const a = window.Announcements.latest();
+            if (a) localStorage.setItem('scholarbud_ann_dismissed', a.at || '');
+            const host = document.getElementById('announcement-banner');
+            if (host) host.classList.add('hidden');
+        }
 
         // Start engine functions on complete window load
         window.onload = async function() {
@@ -5629,6 +5998,9 @@
             safe(function () { AppLogos.apply(); AppLogos.render(); });
             safe(function () { Wallpaper.apply(); Wallpaper.render(); });
             safe(function () { AutoRefresh.start(); });
+            safe(function () { loadCustomCategories(); });
+            safe(function () { Announcements.render(); });
+            safe(function () { Announcements.syncFromCloud(); });
         };
     </script>
     <!-- Mobile bottom pill navigation -->
